@@ -24,6 +24,22 @@ export interface StoredTargetSelection {
   icfCodes: string;
 }
 
+export interface TargetDependentRecord {
+  ingredients: unknown[];
+  mechanismLabel: string;
+  actualDose: string;
+  response: string;
+  measurementStatus: string;
+  outcomeLabel: string;
+  outcomeValue: string;
+  outcomeUnit: string;
+  outcomeCondition: string;
+  measurementReason: string;
+  nextDecision: string;
+  decisionReason: string;
+  nextPlan: string;
+}
+
 function normalizeKeyword(value: string) {
   return value.normalize('NFKC').toLocaleLowerCase('ko-KR').replace(/\s+/g, ' ').trim();
 }
@@ -64,6 +80,44 @@ export function domainTargetResetPatch(nextDomainId: string, currentIcfCodes: st
     targetDirection: '',
     icfCodes: currentIcfWasAutoFilled ? '' : currentIcfCodes,
   };
+}
+
+export function targetDependentResetPatch() {
+  return {
+    ingredients: [],
+    mechanismId: '',
+    mechanismLabel: '',
+    actualDose: '',
+    response: '',
+    measurementStatus: '' as const,
+    outcomeId: '',
+    outcomeLabel: '',
+    outcomeValue: '',
+    outcomeUnit: '',
+    outcomeCondition: '',
+    measurementReason: '',
+    nextDecision: '' as const,
+    decisionReason: '',
+    nextPlan: '',
+  };
+}
+
+export function hasTargetDependentWork(record: TargetDependentRecord) {
+  return Boolean(
+    record.ingredients.length
+    || record.mechanismLabel.trim()
+    || record.actualDose.trim()
+    || record.response.trim()
+    || record.measurementStatus
+    || record.outcomeLabel.trim()
+    || record.outcomeValue.trim()
+    || record.outcomeUnit.trim()
+    || record.outcomeCondition.trim()
+    || record.measurementReason.trim()
+    || record.nextDecision
+    || record.decisionReason.trim()
+    || record.nextPlan.trim(),
+  );
 }
 
 export function repairStoredTargetSelection<T extends StoredTargetSelection>(

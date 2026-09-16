@@ -8,14 +8,28 @@ import {
   createInitialStore,
   createSnapshot,
   generateLiteNote,
+  hasMeaningfulDraft,
   isLiteStore,
   LITE_STORAGE_KEY,
   missingFields,
+  repairLegacyCombinedSafetyStatus,
 } from '@/app/lib/lite-core';
 import type { CustomCatalog, LiteIngredient, LiteRecord, LiteStore } from '@/app/lib/lite-types';
 import { baselineGuides, getGuideEvidenceLabel } from '@/app/lib/baseline-guides';
+import {
+  customOutcomeSelectionPatch,
+  filterOutcomesByKeywords,
+  measurementStatusTransitionPatch,
+  outcomeSelectionPatch,
+} from '@/app/lib/outcome-picker';
 import { rtss } from '@/app/lib/rtss';
-import { domainTargetResetPatch, filterTargetsByKeywords, repairStoredTargetSelection } from '@/app/lib/target-picker';
+import {
+  domainTargetResetPatch,
+  filterTargetsByKeywords,
+  hasTargetDependentWork,
+  repairStoredTargetSelection,
+  targetDependentResetPatch,
+} from '@/app/lib/target-picker';
 
 const today = () => {
   const now = new Date();
@@ -39,13 +53,17 @@ const measurementOptions = [
 const safetyOptions = [
   { value: 'none', label: '이상반응 없음' },
   { value: 'event', label: '이상반응 있음' },
-  { value: 'not_delivered', label: '치료 미실시·중단' },
+  { value: 'treatment_stopped', label: '치료 중단' },
+  { value: 'not_delivered', label: '치료 미실시' },
 ] as const;
 
 const ingredientByLabel = new Map(rtss.ingredients.map((ingredient) => [ingredient.name_kr, ingredient]));
-const mechanismByLabel = new Map(rtss.mechanisms.map((mechanism) => [mechanism.name_kr, mechanism]));
 const CUSTOM_TARGET_VALUE = '__custom_target__';
 const CUSTOM_TARGET_PREFIX = 'custom:';
+const CUSTOM_MECHANISM_VALUE = '__custom_mechanism__';
+const CUSTOM_MECHANISM_PREFIX = 'custom-mechanism:';
+const CUSTOM_OUTCOME_VALUE = '__custom_outcome__';
+const CUSTOM_OUTCOME_PREFIX = 'custom-outcome:';
 
 const outcomeLabel = (id: string) => {
   const outcome = rtss.outcomes.find((item) => item.id === id);
@@ -56,16 +74,16 @@ const outcomeLabel = (id: string) => {
 const outcomeSearchText = (id: string) => {
   const outcome = rtss.outcomes.find((item) => item.id === id);
   const guide = baselineGuides[id];
-  return [guide?.plainName, guide?.fullName, outcome?.name_kr, outcome?.name_en].filter(Boolean).join(' ');
+  return [
+    guide?.plainName,
+    guide?.fullName,
+    guide?.purpose,
+    guide?.scoreFormat,
+    guide?.direction,
+    outcome?.name_kr,
+    outcome?.name_en,
+  ].filter(Boolean).join(' ');
 };
-
-const outcomeByLabel = new Map(
-  rtss.outcomes.flatMap((outcome) => {
-    const guide = baselineGuides[outcome.id];
-    const labels = [outcome.name_kr, guide?.plainName].filter(Boolean) as string[];
-    return labels.map((label) => [label, outcome] as const);
-  }),
-);
 
 function mergeCustomCatalog(catalog: CustomCatalog, record: LiteRecord): CustomCatalog {
   let targets = catalog.targets;
@@ -83,13 +101,36 @@ function mergeCustomCatalog(catalog: CustomCatalog, record: LiteRecord): CustomC
   return { targets, ingredients, mechanisms, outcomes };
 }
 
-function repairStoredTargetDomain(store: LiteStore): LiteStore {
-  const repairedDraft = repairStoredTargetSelection(
+function repairStoredCatalogSelections(store: LiteStore): LiteStore {
+  const targetRepairedDraft = repairStoredTargetSelection(
     store.draft,
     rtss.targets,
     rtss.domains.map((domain) => domain.id),
   );
-  if (repairedDraft === store.draft) return store;
+  const safetyRepairedDraft = repairLegacyCombinedSafetyStatus(targetRepairedDraft);
+  const mechanism = safetyRepairedDraft.mechanismId
+    ? rtss.mechanisms.find((item) => item.id === safetyRepairedDraft.mechanismId)
+    : undefined;
+  const outcome = safetyRepairedDraft.outcomeId
+    ? rtss.outcomes.find((item) => item.id === safetyRepairedDraft.outcomeId)
+    : undefined;
+  const ingredients = safetyRepairedDraft.ingredients.map((ingredient) => {
+    if (ingredient.custom) return ingredient;
+    const canonical = rtss.ingredients.find((item) => item.id === ingredient.id);
+    return canonical
+      ? { ...ingredient, label: canonical.name_kr }
+      : { ...ingredient, custom: true };
+  });
+  const repairedDraft: LiteRecord = {
+    ...safetyRepairedDraft,
+    ingredients,
+    mechanismId: mechanism?.id ?? '',
+    mechanismLabel: mechanism?.name_kr ?? safetyRepairedDraft.mechanismLabel,
+    outcomeId: outcome?.id ?? '',
+    outcomeLabel: outcome
+      ? (baselineGuides[outcome.id]?.plainName ?? outcome.name_kr)
+      : safetyRepairedDraft.outcomeLabel,
+  };
 
   return {
     ...store,
@@ -137,6 +178,12 @@ export default function Home() {
   const [ingredientInput, setIngredientInput] = useState('');
   const [targetSearch, setTargetSearch] = useState('');
   const [customTargetMode, setCustomTargetMode] = useState(false);
+  const [selectedLinkId, setSelectedLinkId] = useState('');
+  const [selectedLinkMechanismId, setSelectedLinkMechanismId] = useState('');
+  const [mechanismSearch, setMechanismSearch] = useState('');
+  const [customMechanismMode, setCustomMechanismMode] = useState(false);
+  const [outcomeSearch, setOutcomeSearch] = useState('');
+  const [customOutcomeMode, setCustomOutcomeMode] = useState(false);
   const [toast, setToast] = useState('');
   const latestSerialized = useRef('');
   const saveStatusRef = useRef(saveStatus);
@@ -186,9 +233,13 @@ export default function Home() {
   const targetSelectionValue = record.targetId
     || (record.targetLabel && !record.targetId ? `${CUSTOM_TARGET_PREFIX}${record.targetLabel}` : '')
     || (customTargetMode ? CUSTOM_TARGET_VALUE : '');
-  const selectedLink = useMemo(
-    () => rtss.links.find((link) => link.target === record.targetId),
+  const selectedLinks = useMemo(
+    () => rtss.links.filter((link) => link.target === record.targetId),
     [record.targetId],
+  );
+  const selectedLink = useMemo(
+    () => selectedLinks.find((link) => link.id === selectedLinkId) ?? selectedLinks[0],
+    [selectedLinkId, selectedLinks],
   );
   const linkPrimaryIngredients = useMemo(
     () => (selectedLink?.primary_ingredients ?? []).map((id) => rtss.ingredients.find((item) => item.id === id)).filter(Boolean),
@@ -202,10 +253,86 @@ export default function Home() {
     () => (selectedLink?.mechanisms ?? []).map((id) => rtss.mechanisms.find((item) => item.id === id)).filter(Boolean),
     [selectedLink],
   );
+  const selectedLinkMechanism = useMemo(
+    () => linkMechanisms.find((mechanism) => mechanism?.id === selectedLinkMechanismId) ?? linkMechanisms[0],
+    [linkMechanisms, selectedLinkMechanismId],
+  );
+  const selectedMechanism = useMemo(
+    () => rtss.mechanisms.find((mechanism) => mechanism.id === record.mechanismId),
+    [record.mechanismId],
+  );
+  const filteredMechanisms = useMemo(() => {
+    const terms = mechanismSearch.normalize('NFKC').toLocaleLowerCase('ko-KR').split(/\s+/).filter(Boolean);
+    if (!terms.length) return rtss.mechanisms;
+    return rtss.mechanisms.filter((mechanism) => {
+      const searchable = [
+        mechanism.id,
+        mechanism.name_kr,
+        mechanism.name_en,
+        mechanism.level,
+        mechanism.category,
+        mechanism.causal_chain,
+        mechanism.operating_conditions,
+        mechanism.typical_targets,
+        mechanism.doc_phrase,
+      ].join(' ').normalize('NFKC').toLocaleLowerCase('ko-KR');
+      return terms.every((term) => searchable.includes(term));
+    });
+  }, [mechanismSearch]);
+  const filteredCustomMechanisms = useMemo(() => {
+    const terms = mechanismSearch.normalize('NFKC').toLocaleLowerCase('ko-KR').split(/\s+/).filter(Boolean);
+    return store.customCatalog.mechanisms.filter((label) => {
+      const normalized = label.normalize('NFKC').toLocaleLowerCase('ko-KR');
+      return terms.every((term) => normalized.includes(term));
+    });
+  }, [mechanismSearch, store.customCatalog.mechanisms]);
+  const selectedMechanismOutsideResults = Boolean(
+    selectedMechanism && !filteredMechanisms.some((mechanism) => mechanism.id === selectedMechanism.id),
+  );
+  const selectedCustomMechanismOutsideResults = Boolean(
+    record.mechanismLabel
+    && !record.mechanismId
+    && !filteredCustomMechanisms.includes(record.mechanismLabel),
+  );
+  const totalMechanismOptionCount = rtss.mechanisms.length + store.customCatalog.mechanisms.length;
+  const filteredMechanismOptionCount = filteredMechanisms.length + filteredCustomMechanisms.length;
+  const showCustomMechanismInput = customMechanismMode || Boolean(record.mechanismLabel && !record.mechanismId);
+  const mechanismSelectionValue = record.mechanismId
+    || (record.mechanismLabel && !record.mechanismId ? `${CUSTOM_MECHANISM_PREFIX}${record.mechanismLabel}` : '')
+    || (customMechanismMode ? CUSTOM_MECHANISM_VALUE : '');
   const recommendedOutcomes = useMemo(
     () => (selectedTarget?.measures ?? []).map((id) => rtss.outcomes.find((item) => item.id === id)).filter(Boolean),
     [selectedTarget],
   );
+  const selectedOutcome = useMemo(
+    () => rtss.outcomes.find((outcome) => outcome.id === record.outcomeId),
+    [record.outcomeId],
+  );
+  const filteredOutcomes = useMemo(
+    () => filterOutcomesByKeywords(rtss.outcomes, outcomeSearch, outcomeSearchText),
+    [outcomeSearch],
+  );
+  const filteredCustomOutcomes = useMemo(() => {
+    const terms = outcomeSearch.normalize('NFKC').toLocaleLowerCase('ko-KR').split(/\s+/).filter(Boolean);
+    return store.customCatalog.outcomes.filter((label) => {
+      const normalized = label.normalize('NFKC').toLocaleLowerCase('ko-KR');
+      return terms.every((term) => normalized.includes(term));
+    });
+  }, [store.customCatalog.outcomes, outcomeSearch]);
+  const selectedOutcomeOutsideResults = Boolean(
+    selectedOutcome && !filteredOutcomes.some((outcome) => outcome.id === selectedOutcome.id),
+  );
+  const selectedCustomOutcomeOutsideResults = Boolean(
+    record.outcomeLabel
+    && !record.outcomeId
+    && !filteredCustomOutcomes.includes(record.outcomeLabel),
+  );
+  const totalOutcomeOptionCount = rtss.outcomes.length + store.customCatalog.outcomes.length;
+  const filteredOutcomeOptionCount = filteredOutcomes.length + filteredCustomOutcomes.length;
+  const showCustomOutcomeInput = customOutcomeMode || Boolean(record.outcomeLabel && !record.outcomeId);
+  const outcomeSelectionValue = record.outcomeId
+    || (record.outcomeLabel && !record.outcomeId ? `${CUSTOM_OUTCOME_PREFIX}${record.outcomeLabel}` : '')
+    || (customOutcomeMode ? CUSTOM_OUTCOME_VALUE : '');
   const selectedGuide = record.outcomeId ? baselineGuides[record.outcomeId] : undefined;
 
   useEffect(() => {
@@ -224,7 +351,7 @@ export default function Home() {
         try {
           const parsed: unknown = JSON.parse(raw);
           if (isLiteStore(parsed)) {
-            const repaired = repairStoredTargetDomain(parsed);
+            const repaired = repairStoredCatalogSelections(parsed);
             setStore(repaired);
             latestSerialized.current = JSON.stringify(repaired);
             setSaveStatus('saved');
@@ -293,38 +420,85 @@ export default function Home() {
 
   const invalid = (key: string) => attemptedCopy && missing.some((item) => item.key === key);
 
+  const confirmTargetDependentReset = () => (
+    !(hasTargetDependentWork(record) || ingredientInput.trim())
+    || window.confirm('치료표적을 바꾸면 현재 표적에 연결된 치료방법·작용기전·결과측정·다음 결정이 초기화됩니다. 계속할까요?')
+  );
+
+  const resetTargetDependentUi = () => {
+    setIngredientInput('');
+    setSelectedLinkId('');
+    setSelectedLinkMechanismId('');
+    setMechanismSearch('');
+    setCustomMechanismMode(false);
+    setOutcomeSearch('');
+    setCustomOutcomeMode(false);
+    setAttemptedCopy(false);
+  };
+
   const selectBuiltInTarget = (targetId: string) => {
     const exact = rtss.targets.find((target) => target.id === targetId && target.domain === record.domainId);
     if (!exact) return;
+    const targetChanged = record.targetId !== exact.id || record.targetLabel !== exact.what_kr;
+    if (targetChanged && !confirmTargetDependentReset()) return;
     const currentIcfWasAutoFilled = Boolean(selectedTarget?.icf && record.icfCodes.trim() === selectedTarget.icf.trim());
     updateDraft({
+      ...(targetChanged ? targetDependentResetPatch() : {}),
       targetId: exact.id,
       targetLabel: exact.what_kr,
       targetDirection: exact.direction,
       domainId: exact.domain,
       icfCodes: !record.icfCodes.trim() || currentIcfWasAutoFilled ? exact.icf : record.icfCodes,
     });
+    if (targetChanged) resetTargetDependentUi();
     setCustomTargetMode(false);
   };
 
-  const startCustomTarget = (value = '') => {
+  const beginCustomTarget = (value = '') => {
+    const targetChanged = Boolean(record.targetId || record.targetLabel !== value);
+    if (targetChanged && !confirmTargetDependentReset()) return;
     const currentIcfWasAutoFilled = Boolean(selectedTarget?.icf && record.icfCodes.trim() === selectedTarget.icf.trim());
     updateDraft({
+      ...(targetChanged ? targetDependentResetPatch() : {}),
       targetId: '',
       targetLabel: value,
       targetDirection: '',
       icfCodes: currentIcfWasAutoFilled ? '' : record.icfCodes,
     });
+    if (targetChanged) resetTargetDependentUi();
     setCustomTargetMode(true);
   };
 
+  const editCustomTarget = (value: string) => {
+    const targetChangedWithWork = value !== record.targetLabel && hasTargetDependentWork(record);
+    if (targetChangedWithWork && !confirmTargetDependentReset()) return;
+    updateDraft({
+      ...(targetChangedWithWork ? targetDependentResetPatch() : {}),
+      targetId: '',
+      targetLabel: value,
+      targetDirection: '',
+    });
+    if (targetChangedWithWork) resetTargetDependentUi();
+  };
+
   const clearTargetSelection = () => {
-    updateDraft(domainTargetResetPatch(record.domainId, record.icfCodes, selectedTarget?.icf));
+    if ((record.targetId || record.targetLabel) && !confirmTargetDependentReset()) return;
+    updateDraft({
+      ...targetDependentResetPatch(),
+      ...domainTargetResetPatch(record.domainId, record.icfCodes, selectedTarget?.icf),
+    });
+    resetTargetDependentUi();
     setCustomTargetMode(false);
   };
 
   const handleDomainChange = (nextDomainId: string) => {
-    updateDraft(domainTargetResetPatch(nextDomainId, record.icfCodes, selectedTarget?.icf));
+    if (nextDomainId === record.domainId) return;
+    if (!confirmTargetDependentReset()) return;
+    updateDraft({
+      ...targetDependentResetPatch(),
+      ...domainTargetResetPatch(nextDomainId, record.icfCodes, selectedTarget?.icf),
+    });
+    resetTargetDependentUi();
     setTargetSearch('');
     setCustomTargetMode(false);
   };
@@ -335,39 +509,183 @@ export default function Home() {
       return;
     }
     if (value === CUSTOM_TARGET_VALUE) {
-      startCustomTarget();
+      beginCustomTarget();
       return;
     }
     if (value.startsWith(CUSTOM_TARGET_PREFIX)) {
-      startCustomTarget(value.slice(CUSTOM_TARGET_PREFIX.length));
+      beginCustomTarget(value.slice(CUSTOM_TARGET_PREFIX.length));
       return;
     }
     selectBuiltInTarget(value);
   };
 
-  const handleMechanismChange = (value: string) => {
-    const exact = mechanismByLabel.get(value);
-    updateDraft({ mechanismId: exact?.id ?? '', mechanismLabel: value });
+  const selectBuiltInMechanism = (mechanismId: string) => {
+    const exact = rtss.mechanisms.find((mechanism) => mechanism.id === mechanismId);
+    if (!exact) return;
+    updateDraft({ mechanismId: exact.id, mechanismLabel: exact.name_kr });
+    setCustomMechanismMode(false);
   };
 
-  const handleOutcomeChange = (value: string) => {
-    const exact = outcomeByLabel.get(value);
-    const guide = exact ? baselineGuides[exact.id] : undefined;
-    const changed = value !== record.outcomeLabel;
+  const beginCustomMechanism = (value = '') => {
+    updateDraft({ mechanismId: '', mechanismLabel: value });
+    setCustomMechanismMode(true);
+  };
+
+  const editCustomMechanism = (value: string) => {
+    updateDraft({ mechanismId: '', mechanismLabel: value });
+  };
+
+  const handleMechanismSelection = (value: string) => {
+    if (!value) {
+      updateDraft({ mechanismId: '', mechanismLabel: '' });
+      setCustomMechanismMode(false);
+      return;
+    }
+    if (value === CUSTOM_MECHANISM_VALUE) {
+      beginCustomMechanism();
+      return;
+    }
+    if (value.startsWith(CUSTOM_MECHANISM_PREFIX)) {
+      beginCustomMechanism(value.slice(CUSTOM_MECHANISM_PREFIX.length));
+      return;
+    }
+    selectBuiltInMechanism(value);
+  };
+
+  const confirmOutcomeChange = () => (
+    !(record.outcomeValue.trim()
+      || record.outcomeUnit.trim()
+      || record.outcomeCondition.trim()
+      || (record.measurementStatus === 'stopped' && record.measurementReason.trim()))
+    || window.confirm('결과측정 도구를 바꾸면 입력한 값·단위·측정 조건·검사 중단 이유가 초기화됩니다. 계속할까요?')
+  );
+
+  const selectBuiltInOutcome = (outcomeId: string) => {
+    const exact = rtss.outcomes.find((outcome) => outcome.id === outcomeId);
+    if (!exact) return;
+    const outcomeChanged = record.outcomeId !== exact.id;
+    if (outcomeChanged && !confirmOutcomeChange()) return;
+    const guide = baselineGuides[exact.id];
+    if (!outcomeChanged) {
+      updateDraft({ outcomeLabel: guide?.plainName ?? exact.name_kr });
+      setCustomOutcomeMode(false);
+      return;
+    }
+    updateDraft(outcomeSelectionPatch(
+      exact.id,
+      guide?.plainName ?? exact.name_kr,
+      guide?.defaultUnit ?? '',
+    ));
+    setCustomOutcomeMode(false);
+  };
+
+  const beginCustomOutcome = (value = '') => {
+    const outcomeChanged = Boolean(record.outcomeId || record.outcomeLabel !== value);
+    if (outcomeChanged && !confirmOutcomeChange()) return;
+    if (!outcomeChanged) {
+      updateDraft({ outcomeId: '', outcomeLabel: value });
+    } else {
+      updateDraft(customOutcomeSelectionPatch(value));
+    }
+    setCustomOutcomeMode(true);
+  };
+
+  const editCustomOutcome = (value: string) => {
+    const outcomeChangedWithWork = value !== record.outcomeLabel
+      && Boolean(
+        record.outcomeValue.trim()
+        || record.outcomeUnit.trim()
+        || record.outcomeCondition.trim()
+        || (record.measurementStatus === 'stopped' && record.measurementReason.trim()),
+      );
+    if (outcomeChangedWithWork && !confirmOutcomeChange()) return;
+    updateDraft(outcomeChangedWithWork
+      ? customOutcomeSelectionPatch(value)
+      : { outcomeId: '', outcomeLabel: value });
+  };
+
+  const clearOutcomeSelection = () => {
+    if ((record.outcomeId || record.outcomeLabel) && !confirmOutcomeChange()) return;
+    updateDraft(customOutcomeSelectionPatch(''));
+    setCustomOutcomeMode(false);
+  };
+
+  const handleOutcomeSelection = (value: string) => {
+    if (!value) {
+      clearOutcomeSelection();
+      return;
+    }
+    if (value === CUSTOM_OUTCOME_VALUE) {
+      beginCustomOutcome();
+      return;
+    }
+    if (value.startsWith(CUSTOM_OUTCOME_PREFIX)) {
+      beginCustomOutcome(value.slice(CUSTOM_OUTCOME_PREFIX.length));
+      return;
+    }
+    selectBuiltInOutcome(value);
+  };
+
+  const handleMeasurementStatusChange = (nextStatus: LiteRecord['measurementStatus']) => {
+    if (nextStatus === record.measurementStatus) return;
+    const hasMeasurementWork = Boolean(
+      record.outcomeLabel.trim()
+      || record.outcomeValue.trim()
+      || record.outcomeUnit.trim()
+      || record.outcomeCondition.trim()
+      || record.measurementReason.trim(),
+    );
+    if (hasMeasurementWork && !window.confirm('결과측정 상태를 바꾸면 현재 상태에 맞지 않는 값·단위·조건·이유가 정리됩니다. 계속할까요?')) return;
+    updateDraft(measurementStatusTransitionPatch(nextStatus));
+    setOutcomeSearch('');
+    if (nextStatus === 'not_tested') setCustomOutcomeMode(false);
+  };
+
+  const handleSafetyStatusChange = (nextStatus: LiteRecord['safetyStatus']) => {
+    if (nextStatus === record.safetyStatus) return;
+    const hasTreatmentWork = Boolean(
+      record.ingredients.length
+      || ingredientInput.trim()
+      || record.mechanismLabel.trim()
+      || record.actualDose.trim()
+      || record.response.trim(),
+    );
+    const clearsTreatmentWork = nextStatus === 'not_delivered' && hasTreatmentWork;
+    const clearsSafetyDetail = Boolean(record.safetyDetail.trim());
+    if ((clearsTreatmentWork || clearsSafetyDetail) && !window.confirm(
+      clearsTreatmentWork && clearsSafetyDetail
+        ? '안전 상태를 바꾸면 기존 안전 상세와 입력한 치료방법·작용기전·제공량·반응이 초기화됩니다. 계속할까요?'
+        : clearsTreatmentWork
+          ? '‘치료 미실시’를 선택하면 입력한 치료방법·작용기전·제공량·반응이 초기화됩니다. 계속할까요?'
+          : '안전 상태를 바꾸면 입력한 안전 상세가 초기화됩니다. 계속할까요?',
+    )) return;
     updateDraft({
-      outcomeId: exact?.id ?? '',
-      outcomeLabel: exact ? (guide?.plainName ?? exact.name_kr) : value,
-      outcomeValue: changed ? '' : record.outcomeValue,
-      outcomeUnit: changed ? (guide?.defaultUnit ?? '') : record.outcomeUnit,
-      outcomeCondition: changed ? '' : record.outcomeCondition,
+      safetyStatus: nextStatus,
+      safetyDetail: '',
+      ...(nextStatus === 'not_delivered' ? {
+        ingredients: [],
+        mechanismId: '',
+        mechanismLabel: '',
+        actualDose: '',
+        response: '',
+      } : {}),
     });
+    if (nextStatus === 'not_delivered') {
+      setIngredientInput('');
+      setMechanismSearch('');
+      setCustomMechanismMode(false);
+    }
   };
 
   const addIngredient = (label = ingredientInput) => {
+    if (record.safetyStatus === 'not_delivered') {
+      announce('치료 미실시 상태입니다. 안전 상태를 바꾼 뒤 치료방법을 입력하세요.');
+      return;
+    }
     const cleaned = label.trim();
     if (!cleaned) return;
     const exact = ingredientByLabel.get(cleaned);
-    const next: LiteIngredient = { id: exact?.id ?? `custom-${Date.now()}`, label: cleaned, custom: !exact };
+    const next: LiteIngredient = { id: exact?.id ?? `custom-${cleaned}`, label: cleaned, custom: !exact };
     if (!record.ingredients.some((item) => item.label.localeCompare(cleaned, 'ko', { sensitivity: 'base' }) === 0)) {
       updateDraft({ ingredients: [...record.ingredients, next] });
     }
@@ -389,30 +707,27 @@ export default function Home() {
   };
 
   const applyReference = () => {
+    if (record.safetyStatus === 'not_delivered') {
+      announce('치료 미실시 상태입니다. 안전 상태를 바꾼 뒤 참고안을 적용하세요.');
+      return;
+    }
     const primary = linkPrimaryIngredients.map((item) => ({ id: item!.id, label: item!.name_kr, custom: false }));
-    const firstMechanism = linkMechanisms[0];
     const hasTreatmentWork = Boolean(record.ingredients.length || record.mechanismLabel.trim() || record.actualDose.trim() || record.response.trim());
     if (hasTreatmentWork && !window.confirm('현재 치료방법·작용기전·제공량·반응을 선택한 표적의 참고안으로 바꿀까요? 실제 시행 내용은 다시 확인해 입력해야 합니다.')) return;
     updateDraft({
       ingredients: primary,
-      mechanismId: firstMechanism?.id ?? '',
-      mechanismLabel: firstMechanism?.name_kr ?? '',
+      mechanismId: selectedLinkMechanism?.id ?? '',
+      mechanismLabel: selectedLinkMechanism?.name_kr ?? '',
       actualDose: '',
       response: '',
     });
+    setMechanismSearch('');
+    setCustomMechanismMode(false);
     announce('선택한 표적의 핵심 참고안을 적용했습니다. 실제 제공량과 반응을 입력하세요.');
   };
 
   const chooseRecommendedOutcome = (id: string) => {
-    const label = outcomeLabel(id);
-    const guide = baselineGuides[id];
-    updateDraft({
-      outcomeId: id,
-      outcomeLabel: label,
-      outcomeValue: '',
-      outcomeUnit: guide?.defaultUnit ?? '',
-      outcomeCondition: '',
-    });
+    selectBuiltInOutcome(id);
   };
 
   const copyCurrentNote = async () => {
@@ -437,9 +752,12 @@ export default function Home() {
     }
     const currentMissing = missingFields(record);
     if (currentMissing.length) {
-      const firstMissingId = currentMissing[0].key === 'targetLabel' && showCustomTargetInput
-        ? 'target-custom'
-        : currentMissing[0].elementId;
+      let firstMissingId = currentMissing[0].elementId;
+      if (currentMissing[0].key === 'targetLabel' && showCustomTargetInput) firstMissingId = 'target-custom';
+      if (currentMissing[0].key === 'mechanismLabel' && showCustomMechanismInput) firstMissingId = 'mechanism-custom';
+      if (currentMissing[0].key === 'outcomeLabel' && showCustomOutcomeInput) {
+        firstMissingId = record.measurementStatus === 'stopped' ? 'stopped-outcome-custom' : 'outcome-custom';
+      }
       const first = document.getElementById(firstMissingId);
       first?.scrollIntoView({ behavior: 'smooth', block: 'center' });
       window.setTimeout(() => first?.focus(), 350);
@@ -453,6 +771,10 @@ export default function Home() {
       const statusAfterCopy = String(saveStatusRef.current);
       if (statusAfterCopy === 'conflict' || statusAfterCopy === 'recovery') {
         announce('문장은 복사했지만 저장상태가 변경되어 최근 기록에는 보관하지 않았습니다.');
+        return;
+      }
+      if (statusAfterCopy === 'error') {
+        announce('문장은 복사했지만 이 기기에 저장되지 않았습니다. 브라우저 저장 설정을 확인해 주세요.');
         return;
       }
       const snapshot = createSnapshot(record);
@@ -471,7 +793,7 @@ export default function Home() {
   };
 
   const startNewRecord = () => {
-    const hasWork = Boolean(record.aim || record.targetLabel || record.ingredients.length || record.response);
+    const hasWork = hasMeaningfulDraft(record, today()) || Boolean(ingredientInput.trim());
     if (hasWork && !window.confirm('현재 입력을 비우고 새 기록을 시작할까요? 최근에 복사한 기록은 보관됩니다.')) return;
     setStore((current) => ({
       ...current,
@@ -481,14 +803,20 @@ export default function Home() {
     setIngredientInput('');
     setTargetSearch('');
     setCustomTargetMode(false);
+    setSelectedLinkId('');
+    setSelectedLinkMechanismId('');
+    setMechanismSearch('');
+    setCustomMechanismMode(false);
+    setOutcomeSearch('');
+    setCustomOutcomeMode(false);
     setAttemptedCopy(false);
     announce('새 기록을 시작했습니다.');
     window.scrollTo({ top: 0, behavior: 'smooth' });
   };
 
   const loadDemo = () => {
-    const hasWork = Boolean(record.aim || record.targetLabel || record.ingredients.length || record.response);
-    if (hasWork && record.caseCode !== 'DEMO-LITE-001' && !window.confirm('현재 입력을 합성 예시로 바꿀까요? 최근에 복사한 기록은 보관됩니다.')) return;
+    const hasWork = hasMeaningfulDraft(record, today()) || Boolean(ingredientInput.trim());
+    if (hasWork && !window.confirm('현재 입력을 합성 예시로 바꿀까요? 최근에 복사한 기록은 보관됩니다.')) return;
     const target = rtss.targets.find((item) => item.id === 'T040')!;
     const link = rtss.links.find((item) => item.target === target.id)!;
     const ingredient = rtss.ingredients.find((item) => item.id === link.primary_ingredients[0])!;
@@ -523,6 +851,12 @@ export default function Home() {
     });
     setTargetSearch('');
     setCustomTargetMode(false);
+    setSelectedLinkId('');
+    setSelectedLinkMechanismId('');
+    setMechanismSearch('');
+    setCustomMechanismMode(false);
+    setOutcomeSearch('');
+    setCustomOutcomeMode(false);
     setAttemptedCopy(false);
     announce('합성 예시를 불러왔습니다. 실제 개인정보를 입력하지 마세요.');
   };
@@ -557,11 +891,105 @@ export default function Home() {
       setInvalidStoredRaw('');
       setSaveStatus('saved');
       latestSerialized.current = JSON.stringify(next);
+      setIngredientInput('');
+      setTargetSearch('');
+      setCustomTargetMode(false);
+      setSelectedLinkId('');
+      setSelectedLinkMechanismId('');
+      setMechanismSearch('');
+      setCustomMechanismMode(false);
+      setOutcomeSearch('');
+      setCustomOutcomeMode(false);
+      setAttemptedCopy(false);
       announce('새 기록으로 시작합니다.');
     } catch {
       setSaveStatus('error');
       announce('기존 저장자료를 지우지 못했습니다. 브라우저 저장 설정을 확인해 주세요.');
     }
+  };
+
+  const renderOutcomePicker = (id: 'outcome' | 'stopped-outcome', title: string, help: string) => {
+    const searchId = `${id}-search`;
+    const customInputId = `${id}-custom`;
+    const selectedOutsideRecommendations = Boolean(
+      selectedOutcome
+      && recommendedOutcomes.length
+      && !recommendedOutcomes.some((outcome) => outcome?.id === selectedOutcome.id),
+    );
+
+    return (
+      <div className={`field target-picker outcome-picker ${invalid('outcomeLabel') ? 'invalid' : ''}`}>
+        <FieldLabel title={title} help={help} htmlFor={searchId} />
+        <div className="target-search-box">
+          <input
+            id={searchId}
+            type="search"
+            value={outcomeSearch}
+            onChange={(event) => setOutcomeSearch(event.target.value)}
+            maxLength={100}
+            placeholder="예: BBS, 10m, 균형, 일상생활"
+            aria-label={`${title} 검색`}
+          />
+          {outcomeSearch && <button type="button" onClick={() => setOutcomeSearch('')} aria-label={`${title} 검색어 지우기`}>지우기</button>}
+        </div>
+        <div className="target-result-meta" aria-live="polite">
+          <span>{totalOutcomeOptionCount}개 중 {filteredOutcomeOptionCount}개 검색됨</span>
+          <span>한글·영문·약어·ICF 영역·설명 검색</span>
+        </div>
+        <select
+          id={id}
+          value={outcomeSelectionValue}
+          onChange={(event) => handleOutcomeSelection(event.target.value)}
+          aria-label={`${title} 선택 목록`}
+          aria-invalid={invalid('outcomeLabel') || undefined}
+          aria-describedby={invalid('outcomeLabel') ? `${id}-error` : undefined}
+        >
+          <option value="">결과측정 도구를 선택하세요 · 기본 {rtss.outcomes.length}개</option>
+          {selectedOutcomeOutsideResults && selectedOutcome && (
+            <optgroup label="현재 선택 · 검색 결과와 별도">
+              <option value={selectedOutcome.id}>{outcomeLabel(selectedOutcome.id)} · {selectedOutcome.name_en}</option>
+            </optgroup>
+          )}
+          {selectedCustomOutcomeOutsideResults && (
+            <optgroup label="현재 선택 · 기관 검토 전 사용자 항목">
+              <option value={`${CUSTOM_OUTCOME_PREFIX}${record.outcomeLabel}`}>{record.outcomeLabel}</option>
+            </optgroup>
+          )}
+          {filteredOutcomes.length > 0 && (
+            <optgroup label={`전체 결과측정 도구 · ${filteredOutcomes.length}개`}>
+              {filteredOutcomes.map((outcome) => (
+                <option key={outcome.id} value={outcome.id}>{outcomeLabel(outcome.id)} · {outcome.name_en}</option>
+              ))}
+            </optgroup>
+          )}
+          {filteredCustomOutcomes.length > 0 && (
+            <optgroup label="기관 검토 전 사용자 항목">
+              {filteredCustomOutcomes.map((label) => <option key={`custom-outcome-${label}`} value={`${CUSTOM_OUTCOME_PREFIX}${label}`}>{label}</option>)}
+            </optgroup>
+          )}
+          {!filteredOutcomeOptionCount && outcomeSearch && <option value="__no_outcome_result__" disabled>검색 결과가 없습니다</option>}
+          <option value={CUSTOM_OUTCOME_VALUE}>목록에 없음 · 직접 입력</option>
+        </select>
+        {showCustomOutcomeInput && (
+          <input
+            id={customInputId}
+            value={record.outcomeLabel}
+            onChange={(event) => editCustomOutcome(event.target.value)}
+            maxLength={180}
+            placeholder="검사 또는 추적 항목의 전체 이름"
+            aria-label={`${title} 직접 입력`}
+            aria-invalid={invalid('outcomeLabel') || undefined}
+            aria-describedby={invalid('outcomeLabel') ? `${id}-error` : undefined}
+          />
+        )}
+        <div className="field-meta">
+          <CustomBadge show={Boolean(record.outcomeLabel && !record.outcomeId)} />
+          <span>기본 목록 {rtss.outcomes.length}개{store.customCatalog.outcomes.length ? ` · 사용자 항목 ${store.customCatalog.outcomes.length}개` : ''}</span>
+        </div>
+        {selectedOutsideRecommendations && <p className="picker-caution">현재 표적의 빠른 추천 목록 밖의 도구입니다. 임상적으로 타당하면 그대로 사용할 수 있습니다.</p>}
+        {invalid('outcomeLabel') && <em id={`${id}-error`}>{title}를 선택하거나 입력해 주세요.</em>}
+      </div>
+    );
   };
 
   return (
@@ -688,6 +1116,8 @@ export default function Home() {
                     aria-label="직접 치료표적 선택 목록"
                     value={targetSelectionValue}
                     onChange={(event) => handleTargetSelection(event.target.value)}
+                    aria-invalid={invalid('targetLabel') || undefined}
+                    aria-describedby={invalid('targetLabel') ? 'target-error' : undefined}
                   >
                     <option value="">치료표적을 선택하세요</option>
                     {selectedTargetOutsideResults && selectedTarget && (
@@ -719,67 +1149,158 @@ export default function Home() {
                     <input
                       id="target-custom"
                       value={record.targetLabel}
-                      onChange={(event) => startCustomTarget(event.target.value)}
+                      onChange={(event) => editCustomTarget(event.target.value)}
                       maxLength={180}
                       placeholder="새 치료표적을 구체적으로 입력"
                       aria-label="새 직접 치료표적 입력"
+                      aria-invalid={invalid('targetLabel') || undefined}
+                      aria-describedby={invalid('targetLabel') ? 'target-error' : undefined}
                     />
                   )}
                   <div className="field-meta"><CustomBadge show={Boolean(record.targetLabel && !record.targetId)} />{record.targetDirection && <span>변화방향 · {record.targetDirection}</span>}</div>
-                  {invalid('targetLabel') && <em>직접 치료표적을 선택하거나 입력해 주세요.</em>}
+                  {invalid('targetLabel') && <em id="target-error">직접 치료표적을 선택하거나 입력해 주세요.</em>}
                 </div>
               </div>
 
               {selectedLink && (
                 <aside className="reference-suggestion" aria-label="치료 구성 참고안">
+                  {selectedLinks.length > 1 && (
+                    <label className="reference-variant">
+                      <span>이 표적의 치료 구성 참고안 {selectedLinks.length}개</span>
+                      <select value={selectedLink.id} onChange={(event) => setSelectedLinkId(event.target.value)} aria-label="치료 구성 참고안 선택">
+                        {selectedLinks.map((link, index) => {
+                          const primaryNames = link.primary_ingredients
+                            .map((id) => rtss.ingredients.find((item) => item.id === id)?.name_kr)
+                            .filter(Boolean)
+                            .slice(0, 2)
+                            .join(', ');
+                          return <option key={link.id} value={link.id}>{index + 1}. {primaryNames || link.id} · {link.strength || '참고안'}</option>;
+                        })}
+                      </select>
+                    </label>
+                  )}
+                  {linkMechanisms.length > 1 && (
+                    <label className="reference-variant">
+                      <span>기록에 적용할 작용기전 {linkMechanisms.length}개 중 선택</span>
+                      <select value={selectedLinkMechanism?.id ?? ''} onChange={(event) => setSelectedLinkMechanismId(event.target.value)} aria-label="참고안 작용기전 선택">
+                        {linkMechanisms.map((mechanism) => <option key={mechanism!.id} value={mechanism!.id}>{mechanism!.name_kr}</option>)}
+                      </select>
+                    </label>
+                  )}
                   <div className="reference-copy">
-                    <span>선택한 표적의 구성 참고안</span>
+                    <span>선택한 표적의 구성 참고안 · {selectedLink.id}</span>
                     <strong>{linkPrimaryIngredients.map((item) => item!.name_kr).join(', ')}</strong>
-                    <p>{linkMechanisms[0]?.doc_phrase ?? linkMechanisms[0]?.name_kr}</p>
+                    <p>{selectedLinkMechanism?.doc_phrase ?? selectedLinkMechanism?.name_kr}</p>
                   </div>
                   <div className="reference-detail">
-                    <span>보조 선택지 · {linkSupportIngredients.slice(0, 2).map((item) => item!.name_kr).join(', ') || '없음'}</span>
+                    <span>보조 선택지 · {linkSupportIngredients.map((item) => item!.name_kr).join(', ') || '없음'}</span>
                     <span>문헌·기관 용량 참고 · {selectedLink.recommended_dose || '기관 기준 확인'}</span>
                   </div>
-                  <button className="button reference-button" type="button" onClick={applyReference}>핵심 구성 가져오기</button>
+                  <button className="button reference-button" type="button" onClick={applyReference} disabled={record.safetyStatus === 'not_delivered'}>핵심 구성 가져오기</button>
                   <small>자동 처방이 아닙니다. 환자 상태와 실제 시행 내용에 맞게 수정하세요.</small>
                 </aside>
               )}
 
+              {record.safetyStatus === 'not_delivered' && <p className="treatment-disabled-notice">현재 안전 상태가 ‘치료 미실시’라 치료내용 입력이 잠겨 있습니다. 치료를 시행했다면 안전 상태를 먼저 바꿔 주세요.</p>}
+
               <div className={`field ${invalid('ingredients') || (attemptedCopy && ingredientInput.trim()) ? 'invalid' : ''}`}>
                 <FieldLabel title="실제 치료방법" help="목록에 없는 방법도 입력한 뒤 ‘추가’를 누를 수 있습니다" htmlFor="ingredient-input" />
                 <div className="add-row">
-                  <input id="ingredient-input" list="ingredient-options" value={ingredientInput} onChange={(event) => setIngredientInput(event.target.value)} onKeyDown={(event) => { if (event.key === 'Enter') { event.preventDefault(); addIngredient(); } }} maxLength={180} placeholder="예: 앉기-서기 반복 연습" />
+                  <input id="ingredient-input" list="ingredient-options" value={ingredientInput} onChange={(event) => setIngredientInput(event.target.value)} onKeyDown={(event) => { if (event.key === 'Enter') { event.preventDefault(); addIngredient(); } }} maxLength={180} placeholder="예: 앉기-서기 반복 연습" disabled={record.safetyStatus === 'not_delivered'} />
                   <datalist id="ingredient-options">
                     {rtss.ingredients.map((item) => <option key={item.id} value={item.name_kr}>{item.description}</option>)}
                     {store.customCatalog.ingredients.map((label) => <option key={`custom-${label}`} value={label}>기관 검토 전 사용자 항목</option>)}
                   </datalist>
-                  <button className="button add-button" type="button" onClick={() => addIngredient()}>추가</button>
+                  <button className="button add-button" type="button" onClick={() => addIngredient()} disabled={record.safetyStatus === 'not_delivered'}>추가</button>
                 </div>
+                <div className="field-meta"><span>기본 목록 {rtss.ingredients.length}개{store.customCatalog.ingredients.length ? ` · 사용자 항목 ${store.customCatalog.ingredients.length}개` : ''}</span></div>
                 {record.ingredients.length > 0 && <div className="chips">{record.ingredients.map((item) => <span className={item.custom ? 'chip custom' : 'chip'} key={item.id}>{item.label}{item.custom && <small>기관 검토 전</small>}<button type="button" aria-label={`${item.label} 삭제`} onClick={() => removeIngredient(item.id)}>×</button></span>)}</div>}
                 {attemptedCopy && ingredientInput.trim() ? <em>입력 중인 치료방법은 ‘추가’를 눌러 기록에 포함해 주세요.</em> : invalid('ingredients') && <em>실제로 시행한 치료방법을 하나 이상 추가해 주세요.</em>}
               </div>
 
-              <div className={`field ${invalid('mechanismLabel') ? 'invalid' : ''}`}>
-                <FieldLabel title="작용기전 가설" help="왜 이 치료가 표적을 바꿀 것으로 보는지에 대한 가설" htmlFor="mechanism" />
-                <input id="mechanism" list="mechanism-options" value={record.mechanismLabel} onChange={(event) => handleMechanismChange(event.target.value)} maxLength={220} placeholder="예: 반복 연습을 통한 암묵적 운동학습" />
-                <datalist id="mechanism-options">
-                  {rtss.mechanisms.map((item) => <option key={item.id} value={item.name_kr}>{item.doc_phrase}</option>)}
-                  {store.customCatalog.mechanisms.map((label) => <option key={`custom-${label}`} value={label}>기관 검토 전 사용자 항목</option>)}
-                </datalist>
-                <CustomBadge show={Boolean(record.mechanismLabel && !record.mechanismId)} />
-                {invalid('mechanismLabel') && <em>예상되는 변화 과정을 한 문장으로 적어 주세요.</em>}
+              <div className={`field target-picker mechanism-picker ${invalid('mechanismLabel') ? 'invalid' : ''}`}>
+                <FieldLabel title="작용기전 가설" help="왜 이 치료가 표적을 바꿀 것으로 보는지에 대한 가설" htmlFor="mechanism-search" />
+                <div className="target-search-box">
+                  <input
+                    id="mechanism-search"
+                    type="search"
+                    value={mechanismSearch}
+                    onChange={(event) => setMechanismSearch(event.target.value)}
+                    maxLength={100}
+                    placeholder="예: 운동학습, 근력, 피드백, 통증"
+                    aria-label="작용기전 가설 검색"
+                    disabled={record.safetyStatus === 'not_delivered'}
+                  />
+                  {mechanismSearch && <button type="button" onClick={() => setMechanismSearch('')} aria-label="작용기전 검색어 지우기">지우기</button>}
+                </div>
+                <div className="target-result-meta" aria-live="polite">
+                  <span>{totalMechanismOptionCount}개 중 {filteredMechanismOptionCount}개 검색됨</span>
+                  <span>한글·영문·분류·인과경로·설명 검색</span>
+                </div>
+                <select
+                  id="mechanism"
+                  value={mechanismSelectionValue}
+                  onChange={(event) => handleMechanismSelection(event.target.value)}
+                  aria-label="작용기전 가설 선택 목록"
+                  aria-invalid={invalid('mechanismLabel') || undefined}
+                  aria-describedby={invalid('mechanismLabel') ? 'mechanism-error' : undefined}
+                  disabled={record.safetyStatus === 'not_delivered'}
+                >
+                  <option value="">작용기전을 선택하세요 · 기본 {rtss.mechanisms.length}개</option>
+                  {selectedMechanismOutsideResults && selectedMechanism && (
+                    <optgroup label="현재 선택 · 검색 결과와 별도">
+                      <option value={selectedMechanism.id}>{selectedMechanism.name_kr} · {selectedMechanism.name_en}</option>
+                    </optgroup>
+                  )}
+                  {selectedCustomMechanismOutsideResults && (
+                    <optgroup label="현재 선택 · 기관 검토 전 사용자 항목">
+                      <option value={`${CUSTOM_MECHANISM_PREFIX}${record.mechanismLabel}`}>{record.mechanismLabel}</option>
+                    </optgroup>
+                  )}
+                  {filteredMechanisms.length > 0 && (
+                    <optgroup label={`전체 작용기전 · ${filteredMechanisms.length}개`}>
+                      {filteredMechanisms.map((mechanism) => (
+                        <option key={mechanism.id} value={mechanism.id}>{mechanism.name_kr} · {mechanism.name_en}</option>
+                      ))}
+                    </optgroup>
+                  )}
+                  {filteredCustomMechanisms.length > 0 && (
+                    <optgroup label="기관 검토 전 사용자 항목">
+                      {filteredCustomMechanisms.map((label) => <option key={`custom-mechanism-${label}`} value={`${CUSTOM_MECHANISM_PREFIX}${label}`}>{label}</option>)}
+                    </optgroup>
+                  )}
+                  {!filteredMechanismOptionCount && mechanismSearch && <option value="__no_mechanism_result__" disabled>검색 결과가 없습니다</option>}
+                  <option value={CUSTOM_MECHANISM_VALUE}>목록에 없음 · 직접 입력</option>
+                </select>
+                {showCustomMechanismInput && (
+                  <input
+                    id="mechanism-custom"
+                    value={record.mechanismLabel}
+                    onChange={(event) => editCustomMechanism(event.target.value)}
+                    maxLength={220}
+                    placeholder="예상되는 변화 과정을 한 문장으로 입력"
+                    aria-label="새 작용기전 가설 직접 입력"
+                    aria-invalid={invalid('mechanismLabel') || undefined}
+                    aria-describedby={invalid('mechanismLabel') ? 'mechanism-error' : undefined}
+                    disabled={record.safetyStatus === 'not_delivered'}
+                  />
+                )}
+                <div className="field-meta">
+                  <CustomBadge show={Boolean(record.mechanismLabel && !record.mechanismId)} />
+                  <span>기본 목록 {rtss.mechanisms.length}개{store.customCatalog.mechanisms.length ? ` · 사용자 항목 ${store.customCatalog.mechanisms.length}개` : ''}</span>
+                </div>
+                {invalid('mechanismLabel') && <em id="mechanism-error">예상되는 변화 과정을 한 문장으로 적어 주세요.</em>}
               </div>
 
               <div className="field-grid two-col">
                 <div className={`field ${invalid('actualDose') ? 'invalid' : ''}`}>
                   <FieldLabel title="오늘 실제 제공한 양" help="반복·시간·강도·도움·휴식을 가능한 만큼 구체적으로" htmlFor="actual-dose" />
-                  <textarea id="actual-dose" value={record.actualDose} onChange={(event) => updateDraft({ actualDose: event.target.value })} maxLength={500} rows={4} placeholder="예: 35회 · 좌석 48cm · 접촉 도움 · 10회마다 1분 휴식" />
+                  <textarea id="actual-dose" value={record.actualDose} onChange={(event) => updateDraft({ actualDose: event.target.value })} maxLength={500} rows={4} placeholder="예: 35회 · 좌석 48cm · 접촉 도움 · 10회마다 1분 휴식" disabled={record.safetyStatus === 'not_delivered'} />
                   {invalid('actualDose') && <em>계획량이 아니라 실제로 제공한 양을 적어 주세요.</em>}
                 </div>
                 <div className={`field ${invalid('response') ? 'invalid' : ''}`}>
                   <FieldLabel title="즉각 반응" help="수행 변화, 피로, 통증, 필요한 도움을 관찰 그대로" htmlFor="response" />
-                  <textarea id="response" value={record.response} onChange={(event) => updateDraft({ response: event.target.value })} maxLength={500} rows={4} placeholder="예: 마지막 5회에서 속도 저하, 무릎 붕괴 없이 완료" />
+                  <textarea id="response" value={record.response} onChange={(event) => updateDraft({ response: event.target.value })} maxLength={500} rows={4} placeholder="예: 마지막 5회에서 속도 저하, 무릎 붕괴 없이 완료" disabled={record.safetyStatus === 'not_delivered'} />
                   {invalid('response') && <em>치료 직후 관찰한 반응을 적어 주세요.</em>}
                 </div>
               </div>
@@ -794,7 +1315,7 @@ export default function Home() {
               <fieldset className={`field choice-field ${invalid('measurementStatus') ? 'invalid' : ''}`} id="measurement-status" tabIndex={-1}>
                 <legend>결과측정 상태 <span>오늘 측정 여부를 반드시 하나 선택</span></legend>
                 <div className="choice-grid three">
-                  {measurementOptions.map((option) => <label key={option.value} className={record.measurementStatus === option.value ? 'choice selected' : 'choice'}><input type="radio" name="measurement-status" value={option.value} checked={record.measurementStatus === option.value} onChange={() => updateDraft({ measurementStatus: option.value })} /><span>{option.label}</span></label>)}
+                  {measurementOptions.map((option) => <label key={option.value} className={record.measurementStatus === option.value ? 'choice selected' : 'choice'}><input type="radio" name="measurement-status" value={option.value} checked={record.measurementStatus === option.value} onChange={() => handleMeasurementStatusChange(option.value)} /><span>{option.label}</span></label>)}
                 </div>
                 {invalid('measurementStatus') && <em>측정 완료, 검사하지 않음, 검사 중단 중 하나를 선택해 주세요.</em>}
               </fieldset>
@@ -802,15 +1323,7 @@ export default function Home() {
               {record.measurementStatus === 'completed' && (
                 <div className="measurement-panel">
                   {recommendedOutcomes.length > 0 && <div className="quick-picks"><span>이 표적에 연결된 평가</span>{recommendedOutcomes.map((outcome) => <button key={outcome!.id} type="button" onClick={() => chooseRecommendedOutcome(outcome!.id)}>{outcomeLabel(outcome!.id)}</button>)}</div>}
-                  <div className={`field ${invalid('outcomeLabel') ? 'invalid' : ''}`}>
-                    <FieldLabel title="결과측정 도구" help="변화를 확인한 검사 또는 추적 항목" htmlFor="outcome" />
-                    <input id="outcome" list="outcome-options" value={record.outcomeLabel} onChange={(event) => handleOutcomeChange(event.target.value)} maxLength={180} placeholder="검색하거나 직접 입력" />
-                    <datalist id="outcome-options">
-                      {rtss.outcomes.map((outcome) => <option key={outcome.id} value={outcomeLabel(outcome.id)}>{outcome.name_en}</option>)}
-                      {store.customCatalog.outcomes.map((label) => <option key={`custom-${label}`} value={label}>기관 검토 전 사용자 항목</option>)}
-                    </datalist>
-                    <CustomBadge show={Boolean(record.outcomeLabel && !record.outcomeId)} />
-                  </div>
+                  {renderOutcomePicker('outcome', '결과측정 도구', '전체 목록에서 검사 또는 추적 항목 선택')}
                   <div className="field-grid score-grid">
                     <div className={`field ${invalid('outcomeValue') ? 'invalid' : ''}`}>
                       <FieldLabel title="값" help="원점수" htmlFor="outcome-value" />
@@ -832,10 +1345,15 @@ export default function Home() {
                       <div className="guide-body">
                         <div><strong>{selectedGuide.fullName}</strong><p>{selectedGuide.purpose}</p></div>
                         <dl><div><dt>점수 형식</dt><dd>{selectedGuide.scoreFormat}</dd></div><div><dt>좋아지는 방향</dt><dd>{selectedGuide.direction}</dd></div></dl>
-                        <ul>{selectedGuide.recording.slice(0, 3).map((item) => <li key={item}>{item}</li>)}</ul>
-                        {selectedGuide.referenceValues.slice(0, 2).map((item) => <p className="evidence-line" key={`${item.label}-${item.value}`}><b>{item.label}</b> · {item.value} <span>{item.population}</span></p>)}
+                        <p className="guide-example"><b>기록 예시</b> · {selectedGuide.example}</p>
+                        <ul>{selectedGuide.recording.map((item) => <li key={item}>{item}</li>)}</ul>
+                        {selectedGuide.referenceValues.length > 0 && <strong className="guide-subtitle">해석 참고값</strong>}
+                        {selectedGuide.referenceValues.map((item) => <p className="evidence-line" key={`${item.label}-${item.value}`}><b>{item.label}</b> · {item.value} <span>{item.population}</span></p>)}
+                        {selectedGuide.changeValues.length > 0 && <strong className="guide-subtitle">변화량 참고값</strong>}
+                        {selectedGuide.changeValues.map((item) => <p className="evidence-line" key={`change-${item.label}-${item.value}`}><b>{item.label}</b> · {item.value} <span>{item.population}</span></p>)}
+                        {selectedGuide.cautions.map((caution) => <p className="guide-caution" key={caution}>{caution}</p>)}
                         <p className="guide-caution">참고값은 자동 판정이나 처방이 아닙니다. 대상군·시기·검사 절차가 원문과 맞는지 확인하세요.</p>
-                        <div className="source-links">{selectedGuide.sources.slice(0, 3).map((source) => <a key={source.url} href={source.url} target="_blank" rel="noreferrer">{source.label}</a>)}</div>
+                        <div className="source-links">{selectedGuide.sources.map((source) => <a key={source.url} href={source.url} target="_blank" rel="noreferrer">{source.label}</a>)}</div>
                       </div>
                     </details>
                   )}
@@ -845,15 +1363,7 @@ export default function Home() {
               {record.measurementStatus === 'stopped' && (
                 <div className="measurement-panel stopped-panel">
                   {recommendedOutcomes.length > 0 && <div className="quick-picks"><span>이 표적에 연결된 평가</span>{recommendedOutcomes.map((outcome) => <button key={outcome!.id} type="button" onClick={() => chooseRecommendedOutcome(outcome!.id)}>{outcomeLabel(outcome!.id)}</button>)}</div>}
-                  <div className={`field ${invalid('outcomeLabel') ? 'invalid' : ''}`}>
-                    <FieldLabel title="중단한 결과측정 도구" help="어떤 검사를 중단했는지 기록" htmlFor="stopped-outcome" />
-                    <input id="stopped-outcome" list="outcome-options" value={record.outcomeLabel} onChange={(event) => handleOutcomeChange(event.target.value)} maxLength={180} placeholder="검색하거나 직접 입력" />
-                    <datalist id="outcome-options">
-                      {rtss.outcomes.map((outcome) => <option key={outcome.id} value={outcomeLabel(outcome.id)}>{outcome.name_en}</option>)}
-                      {store.customCatalog.outcomes.map((label) => <option key={`custom-${label}`} value={label}>기관 검토 전 사용자 항목</option>)}
-                    </datalist>
-                    <CustomBadge show={Boolean(record.outcomeLabel && !record.outcomeId)} />
-                  </div>
+                  {renderOutcomePicker('stopped-outcome', '중단한 결과측정 도구', '전체 목록에서 중단한 검사를 선택')}
                 </div>
               )}
 
@@ -866,14 +1376,18 @@ export default function Home() {
 
               <fieldset className={`field choice-field ${invalid('safetyStatus') ? 'invalid' : ''}`} id="safety-status" tabIndex={-1}>
                 <legend>안전 상태 <span>관찰한 사실만 기록</span></legend>
-                <div className="choice-grid three">
-                  {safetyOptions.map((option) => <label key={option.value} className={record.safetyStatus === option.value ? 'choice selected' : 'choice'}><input type="radio" name="safety-status" value={option.value} checked={record.safetyStatus === option.value} onChange={() => updateDraft({ safetyStatus: option.value })} /><span>{option.label}</span></label>)}
+                <div className="choice-grid four">
+                  {safetyOptions.map((option) => <label key={option.value} className={record.safetyStatus === option.value ? 'choice selected' : 'choice'}><input type="radio" name="safety-status" value={option.value} checked={record.safetyStatus === option.value} onChange={() => handleSafetyStatusChange(option.value)} /><span>{option.label}</span></label>)}
                 </div>
               </fieldset>
 
-              {(record.safetyStatus === 'event' || record.safetyStatus === 'not_delivered') && (
+              {(record.safetyStatus === 'event' || record.safetyStatus === 'treatment_stopped' || record.safetyStatus === 'not_delivered') && (
                 <div className={`field ${invalid('safetyDetail') ? 'invalid' : ''}`}>
-                  <FieldLabel title="안전·중단 상세" help="증상, 시점, 조치와 인계 내용을 구체적으로" htmlFor="safety-detail" />
+                  <FieldLabel
+                    title={record.safetyStatus === 'not_delivered' ? '치료 미실시 상세' : record.safetyStatus === 'treatment_stopped' ? '치료 중단 상세' : '이상반응 상세'}
+                    help={record.safetyStatus === 'not_delivered' ? '치료하지 않은 이유와 필요한 인계 내용을 구체적으로' : '중단 또는 증상의 시점, 조치와 인계 내용을 구체적으로'}
+                    htmlFor="safety-detail"
+                  />
                   <textarea id="safety-detail" value={record.safetyDetail} onChange={(event) => updateDraft({ safetyDetail: event.target.value })} maxLength={600} rows={3} placeholder="관찰 내용과 조치를 작성" />
                 </div>
               )}

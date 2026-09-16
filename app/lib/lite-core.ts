@@ -56,6 +56,28 @@ export function createInitialStore(recordDate: string): LiteStore {
   };
 }
 
+export function hasMeaningfulDraft(record: LiteRecord, defaultRecordDate = record.recordDate) {
+  if (record.ingredients.length) return true;
+  if (record.recordDate !== defaultRecordDate) return true;
+  const ignored = new Set<keyof LiteRecord>(['recordDate', 'domainId', 'ingredients']);
+  return (Object.keys(record) as Array<keyof LiteRecord>).some((key) => {
+    if (ignored.has(key)) return false;
+    const value = record[key];
+    return typeof value === 'string' && Boolean(value.trim());
+  });
+}
+
+export function repairLegacyCombinedSafetyStatus(record: LiteRecord): LiteRecord {
+  if (record.safetyStatus !== 'not_delivered') return record;
+  const hasDeliveredTreatment = Boolean(
+    record.ingredients.length
+    || record.mechanismLabel.trim()
+    || record.actualDose.trim()
+    || record.response.trim(),
+  );
+  return hasDeliveredTreatment ? { ...record, safetyStatus: 'treatment_stopped' } : record;
+}
+
 const isString = (value: unknown): value is string => typeof value === 'string';
 
 export function isLiteStore(value: unknown): value is LiteStore {
@@ -78,7 +100,7 @@ export function isLiteStore(value: unknown): value is LiteStore {
   })) return false;
 
   if (!['', 'completed', 'stopped', 'not_tested'].includes(draft.measurementStatus as string)) return false;
-  if (!['', 'none', 'event', 'not_delivered'].includes(draft.safetyStatus as string)) return false;
+  if (!['', 'none', 'event', 'treatment_stopped', 'not_delivered'].includes(draft.safetyStatus as string)) return false;
   if (!['', 'maintain', 'progress', 'adjust', 'hold'].includes(draft.nextDecision as string)) return false;
 
   const catalog = candidate.customCatalog as unknown as Record<string, unknown>;
@@ -126,8 +148,11 @@ export function missingFields(record: LiteRecord): MissingField[] {
   }
 
   requireText('safetyStatus', '안전 상태', 'safety-status');
-  if (record.safetyStatus === 'event' || record.safetyStatus === 'not_delivered') {
-    requireText('safetyDetail', '안전·중단 상세', 'safety-detail');
+  if (record.safetyStatus === 'event' || record.safetyStatus === 'treatment_stopped' || record.safetyStatus === 'not_delivered') {
+    const label = record.safetyStatus === 'not_delivered'
+      ? '치료 미실시 상세'
+      : record.safetyStatus === 'treatment_stopped' ? '치료 중단 상세' : '이상반응 상세';
+    requireText('safetyDetail', label, 'safety-detail');
   }
 
   requireText('nextDecision', '다음 결정', 'next-decision');
@@ -141,7 +166,7 @@ export function completionPercent(record: LiteRecord) {
   if (record.measurementStatus === 'completed') totalRequirements += 4;
   if (record.measurementStatus === 'stopped') totalRequirements += 2;
   if (record.measurementStatus === 'not_tested') totalRequirements += 1;
-  if (record.safetyStatus === 'event' || record.safetyStatus === 'not_delivered') totalRequirements += 1;
+  if (record.safetyStatus === 'event' || record.safetyStatus === 'treatment_stopped' || record.safetyStatus === 'not_delivered') totalRequirements += 1;
   const missingCount = Math.min(totalRequirements, missingFields(record).length);
   return Math.max(0, Math.round(((totalRequirements - missingCount) / totalRequirements) * 100));
 }
@@ -171,10 +196,12 @@ export function generateLiteNote(record: LiteRecord) {
     const direction = record.targetDirection.trim() ? ` · 변화방향: ${clean(record.targetDirection)}` : '';
     lines.push(`직접 치료표적: ${clean(record.targetLabel)}${direction}`);
   }
-  if (record.ingredients.length) lines.push(`실제 치료방법: ${record.ingredients.map((item) => clean(item.label)).join(', ')}`);
-  if (record.mechanismLabel.trim()) lines.push(`작용기전 가설: ${clean(record.mechanismLabel)}`);
-  if (record.actualDose.trim()) lines.push(`실제 제공량: ${clean(record.actualDose)}`);
-  if (record.response.trim()) lines.push(`즉각 반응: ${clean(record.response)}`);
+  if (record.safetyStatus !== 'not_delivered') {
+    if (record.ingredients.length) lines.push(`실제 치료방법: ${record.ingredients.map((item) => clean(item.label)).join(', ')}`);
+    if (record.mechanismLabel.trim()) lines.push(`작용기전 가설: ${clean(record.mechanismLabel)}`);
+    if (record.actualDose.trim()) lines.push(`실제 제공량: ${clean(record.actualDose)}`);
+    if (record.response.trim()) lines.push(`즉각 반응: ${clean(record.response)}`);
+  }
 
   if (record.measurementStatus === 'completed') {
     const score = [clean(record.outcomeValue), clean(record.outcomeUnit)].filter(Boolean).join(' ');
@@ -188,7 +215,8 @@ export function generateLiteNote(record: LiteRecord) {
 
   if (record.safetyStatus === 'none') lines.push('안전: 이상반응 없음');
   if (record.safetyStatus === 'event') lines.push(`안전: 이상반응 있음${record.safetyDetail.trim() ? ` · ${clean(record.safetyDetail)}` : ''}`);
-  if (record.safetyStatus === 'not_delivered') lines.push(`안전: 치료 미실시·중단${record.safetyDetail.trim() ? ` · ${clean(record.safetyDetail)}` : ''}`);
+  if (record.safetyStatus === 'treatment_stopped') lines.push(`안전: 치료 중단${record.safetyDetail.trim() ? ` · ${clean(record.safetyDetail)}` : ''}`);
+  if (record.safetyStatus === 'not_delivered') lines.push(`안전: 치료 미실시${record.safetyDetail.trim() ? ` · ${clean(record.safetyDetail)}` : ''}`);
 
   if (record.nextDecision) {
     const reason = record.decisionReason.trim() ? ` · 근거: ${clean(record.decisionReason)}` : '';

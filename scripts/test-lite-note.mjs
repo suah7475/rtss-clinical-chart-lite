@@ -6,11 +6,26 @@ import {
   createEmptyRecord,
   createInitialStore,
   generateLiteNote,
+  hasMeaningfulDraft,
   isLiteStore,
   LITE_STORAGE_KEY,
   missingFields,
+  repairLegacyCombinedSafetyStatus,
 } from '../app/lib/lite-core.ts';
-import { domainTargetResetPatch, filterTargetsByKeywords, repairStoredTargetSelection } from '../app/lib/target-picker.ts';
+import { baselineGuides } from '../app/lib/baseline-guides.ts';
+import {
+  filterOutcomesByKeywords,
+  measurementStatusTransitionPatch,
+  outcomeSelectionPatch,
+  suggestedOutcomeUnit,
+} from '../app/lib/outcome-picker.ts';
+import {
+  domainTargetResetPatch,
+  filterTargetsByKeywords,
+  hasTargetDependentWork,
+  repairStoredTargetSelection,
+  targetDependentResetPatch,
+} from '../app/lib/target-picker.ts';
 
 const seed = JSON.parse(readFileSync(new URL('../app/data/rtss-seed.json', import.meta.url), 'utf8'));
 
@@ -88,6 +103,24 @@ const notDelivered = {
 };
 assert.deepEqual(missingFields(notDelivered), [], '치료 미실시 회기는 허위 치료내용 없이 기록할 수 있다');
 assert.doesNotMatch(generateLiteNote(notDelivered), /실제 치료방법|실제 제공량|즉각 반응/, '미실시 회기에 비어 있는 치료내용을 만들지 않는다');
+const notDeliveredWithStaleTreatment = {
+  ...completeRecord,
+  safetyStatus: 'not_delivered',
+  safetyDetail: '당일 의학적 상태 변화로 치료하지 않음',
+};
+assert.doesNotMatch(
+  generateLiteNote(notDeliveredWithStaleTreatment),
+  /실제 치료방법|작용기전 가설|실제 제공량|즉각 반응/,
+  '치료 미실시 상태에는 남아 있던 치료내용을 기록문에 출력하지 않는다',
+);
+assert.match(generateLiteNote(notDeliveredWithStaleTreatment), /안전: 치료 미실시/, '치료 미실시를 중단과 구분해 기록한다');
+
+const legacyStoppedTreatment = repairLegacyCombinedSafetyStatus(notDeliveredWithStaleTreatment);
+assert.equal(legacyStoppedTreatment.safetyStatus, 'treatment_stopped', '이전 통합 상태에 치료내용이 있으면 치료 중단으로 안전하게 분류한다');
+assert.deepEqual(missingFields(legacyStoppedTreatment), [], '치료 중단 기록은 실제 치료내용과 중단 상세가 있으면 완료된다');
+assert.match(generateLiteNote(legacyStoppedTreatment), /실제 치료방법: 앉기-서기 반복 연습/, '이전 치료 중단 기록의 실제 치료내용을 보존한다');
+assert.match(generateLiteNote(legacyStoppedTreatment), /안전: 치료 중단/, '이전 치료 중단 기록을 미실시와 구분한다');
+assert.equal(repairLegacyCombinedSafetyStatus(notDelivered).safetyStatus, 'not_delivered', '치료내용이 없는 이전 통합 상태는 치료 미실시로 유지한다');
 
 const stoppedWithoutTool = { ...completeRecord, measurementStatus: 'stopped', outcomeLabel: '', measurementReason: '피로 호소' };
 assert.ok(missingFields(stoppedWithoutTool).some((item) => item.key === 'outcomeLabel'), '검사 중단 시 중단한 도구명을 요구한다');
@@ -101,6 +134,23 @@ const initial = createInitialStore('2026-09-16');
 assert.equal(isLiteStore(initial), true, '정상 Lite 저장자료를 인식한다');
 assert.equal(isLiteStore({ schemaVersion: 2 }), false, '알 수 없는 저장 형식을 거부한다');
 assert.equal(isLiteStore({ schemaVersion: 1, draft: { caseCode: '부분자료', recordDate: '2026-09-16', aim: '', ingredients: [], targetLabel: '', mechanismLabel: '' }, customCatalog: {}, snapshots: [], updatedAt: '' }), false, '불완전한 저장자료를 정상자료로 열지 않는다');
+
+assert.equal(hasMeaningfulDraft(createEmptyRecord('2026-09-16')), false, '기본 날짜와 임상영역만 있는 기록은 작업 중 자료로 보지 않는다');
+assert.equal(hasMeaningfulDraft(createEmptyRecord('2026-09-15'), '2026-09-16'), true, '기본 날짜와 다른 기록일도 작업 중 자료로 감지한다');
+assert.equal(hasMeaningfulDraft({ ...createEmptyRecord('2026-09-16'), caseCode: 'CASE-001' }), true, '사례 코드만 입력해도 작업 중 자료로 감지한다');
+assert.equal(
+  hasMeaningfulDraft({ ...createEmptyRecord('2026-09-16'), ingredients: [{ id: 'I001', label: '보행 연습', custom: false }] }),
+  true,
+  '치료방법만 입력해도 작업 중 자료로 감지한다',
+);
+
+assert.deepEqual(
+  [seed.domains.length, seed.targets.length, seed.ingredients.length, seed.mechanisms.length, seed.outcomes.length, seed.links.length],
+  [12, 85, 114, 61, 37, 97],
+  '임상 DB의 모든 주요 자료 수를 유지한다',
+);
+assert.equal(Object.keys(baselineGuides).length, 37, '37개 결과측정 도구 모두 기준선 가이드를 제공한다');
+assert.ok(seed.outcomes.every((outcome) => baselineGuides[outcome.id]), 'DB의 모든 결과측정 도구가 기준선 가이드와 연결된다');
 
 const expectedTargetCounts = [14, 6, 9, 8, 6, 12, 7, 1, 5, 2, 10, 5];
 assert.deepEqual(
@@ -122,12 +172,101 @@ assert.ok(filterTargetsByKeywords(walkingTargets, 'TUG', outcomeNameForId).some(
 assert.ok(filterTargetsByKeywords(walkingTargets, 'FAC', outcomeNameForId).some((target) => target.id === 'T034'), 'FAC 평가도구 약어로 치료표적을 찾는다');
 assert.ok(filterTargetsByKeywords(balanceTargets, 'BBS', outcomeNameForId).some((target) => target.id === 'T022'), 'BBS 평가도구 약어로 치료표적을 찾는다');
 
+const guideSearchText = (outcomeId) => {
+  const guide = baselineGuides[outcomeId];
+  return guide ? [guide.plainName, guide.fullName, guide.purpose, guide.scoreFormat, guide.direction].join(' ') : '';
+};
+assert.equal(filterOutcomesByKeywords(seed.outcomes, '', guideSearchText).length, 37, '검색어가 없으면 결과측정 도구 37개를 모두 표시한다');
+assert.deepEqual(filterOutcomesByKeywords(seed.outcomes, 'BBS', guideSearchText).map((outcome) => outcome.id), ['O03'], 'BBS 약어로 결과측정 도구를 찾는다');
+assert.ok(filterOutcomesByKeywords(seed.outcomes, 'SIS', guideSearchText).some((outcome) => outcome.id === 'O36'), 'SIS 약어로 추가된 결과측정 도구를 찾는다');
+assert.deepEqual(filterOutcomesByKeywords(seed.outcomes, 'NIHSS', guideSearchText).map((outcome) => outcome.id), ['O37'], 'NIHSS 약어로 추가된 결과측정 도구를 찾는다');
+assert.deepEqual(filterOutcomesByKeywords(seed.outcomes, '뇌졸중 영향', guideSearchText).map((outcome) => outcome.id), ['O36'], '여러 한글 키워드가 모두 맞는 결과측정 도구를 찾는다');
+
+assert.deepEqual(
+  outcomeSelectionPatch('O06', baselineGuides.O06.plainName, baselineGuides.O06.defaultUnit),
+  {
+    outcomeId: 'O06',
+    outcomeLabel: '5회 앉았다 일어서기 검사',
+    outcomeValue: '',
+    outcomeUnit: '초(s)',
+    outcomeCondition: '',
+    measurementReason: '',
+  },
+  '도구 선택 시 식별자·쉬운 이름·명확한 기본 단위를 반영한다',
+);
+assert.equal(suggestedOutcomeUnit(baselineGuides.O09.defaultUnit), '', '여러 단위가 섞인 결과측정 도구는 단위를 임의로 자동 선택하지 않는다');
+assert.equal(suggestedOutcomeUnit(baselineGuides.O36.defaultUnit), '', '영역별로 달라지는 단위는 임의로 자동 선택하지 않는다');
+
+assert.deepEqual(
+  measurementStatusTransitionPatch('completed'),
+  { measurementStatus: 'completed', measurementReason: '' },
+  '측정 완료로 바꾸면 이전 미측정 사유를 제거한다',
+);
+assert.deepEqual(
+  measurementStatusTransitionPatch('stopped'),
+  {
+    measurementStatus: 'stopped',
+    outcomeValue: '',
+    outcomeUnit: '',
+    outcomeCondition: '',
+    measurementReason: '',
+  },
+  '측정 중단으로 바꾸면 도구명은 유지하되 완료값·단위·조건을 제거한다',
+);
+assert.deepEqual(
+  measurementStatusTransitionPatch('not_tested'),
+  {
+    measurementStatus: 'not_tested',
+    outcomeId: '',
+    outcomeLabel: '',
+    outcomeValue: '',
+    outcomeUnit: '',
+    outcomeCondition: '',
+    measurementReason: '',
+  },
+  '미측정으로 바꾸면 이전 결과측정 도구와 값을 모두 제거한다',
+);
+
+const linksByTarget = new Map();
+seed.links.forEach((link) => linksByTarget.set(link.target, [...(linksByTarget.get(link.target) ?? []), link]));
+assert.equal(seed.links.length - linksByTarget.size, 12, '다중 치료 구성 Link 변형 12개를 보존한다');
+assert.deepEqual(
+  [...linksByTarget.values()].flatMap((links) => links.map((link) => link.id)).sort(),
+  seed.links.map((link) => link.id).sort(),
+  'Target별 선택 목록으로 97개 Link 변형을 모두 조회할 수 있다',
+);
+
 assert.deepEqual(
   domainTargetResetPatch('D01', 'd4104', 'd4104'),
   { domainId: 'D01', targetId: '', targetLabel: '', targetDirection: '', icfCodes: '' },
   '임상영역 변경 시 이전 표적과 자동 입력 ICF를 초기화한다',
 );
 assert.equal(domainTargetResetPatch('D01', 'd999', 'd4104').icfCodes, 'd999', '치료사가 직접 입력한 ICF는 영역 변경 시 보존한다');
+
+const emptyTargetDependent = createEmptyRecord('2026-09-16');
+assert.equal(hasTargetDependentWork(emptyTargetDependent), false, '표적 이후 입력이 없으면 초기화 확인이 필요하지 않다');
+assert.equal(hasTargetDependentWork(completeRecord), true, '치료·측정·다음 결정이 있으면 표적 종속 작업을 감지한다');
+assert.deepEqual(
+  targetDependentResetPatch(),
+  {
+    ingredients: [],
+    mechanismId: '',
+    mechanismLabel: '',
+    actualDose: '',
+    response: '',
+    measurementStatus: '',
+    outcomeId: '',
+    outcomeLabel: '',
+    outcomeValue: '',
+    outcomeUnit: '',
+    outcomeCondition: '',
+    measurementReason: '',
+    nextDecision: '',
+    decisionReason: '',
+    nextPlan: '',
+  },
+  '치료표적 변경 시 표적에 종속된 치료·측정·다음 결정 자료를 모두 초기화한다',
+);
 
 const domainIds = seed.domains.map((domain) => domain.id);
 const canonicalTarget = seed.targets.find((target) => target.id === 'T040');
@@ -157,4 +296,4 @@ assert.equal(
   '임상영역과 표적이 모두 유효하지 않으면 기본 영역으로 복구한다',
 );
 
-console.log('RTSS Lite note tests passed: 37 checks');
+console.log('RTSS Lite note tests passed');

@@ -1,7 +1,7 @@
 export type RecoveryPhase = '' | 'hyperacute' | 'acute' | 'early_subacute' | 'late_subacute' | 'chronic';
 
 export type MeasurementStatus = '' | 'completed' | 'stopped' | 'not_tested';
-export type SafetyStatus = '' | 'none' | 'event' | 'not_delivered';
+export type SafetyStatus = '' | 'none' | 'event' | 'treatment_stopped' | 'not_delivered';
 export type NextDecision = '' | 'maintain' | 'progress' | 'adjust' | 'hold';
 
 export interface LiteIngredient {

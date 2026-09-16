@@ -102,25 +102,6 @@ export const rtss = {
     ...target,
     icf: v21IcfCorrections[target.id] ?? target.icf,
   })),
-  outcomes: [
-    ...seed.outcomes,
-    {
-      id: 'O36',
-      name_kr: '뇌졸중 영향 척도',
-      name_en: 'Stroke Impact Scale (SIS)',
-      icf_level: '신체기능·활동·참여',
-      domains: '전체',
-      note: '환자보고 결과. 문항·버전과 측정조건을 함께 기록',
-    },
-    {
-      id: 'O37',
-      name_kr: '미국 국립보건원 뇌졸중 척도',
-      name_en: 'NIH Stroke Scale (NIHSS)',
-      icf_level: '신체기능',
-      domains: '전체',
-      note: '신경학적 중증도 지표이며 물리치료 반응 단독 지표로 해석하지 않음',
-    },
-  ],
 };
 
 export const groupLabel = (group: string) =>
