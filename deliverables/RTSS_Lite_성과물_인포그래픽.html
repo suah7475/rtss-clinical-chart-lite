@@ -1,0 +1,737 @@
+<!doctype html>
+<html lang="ko">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>RTSS Lite | 성과물 인포그래픽</title>
+  <style>
+    :root {
+      --cream: #f5efe4;
+      --paper: #fffdf8;
+      --ink: #183a39;
+      --teal: #0d625f;
+      --teal-2: #267a75;
+      --mint: #d9e7e0;
+      --mint-2: #edf4ef;
+      --coral: #e46d55;
+      --coral-soft: #f6ddd5;
+      --gold: #d5ad56;
+      --line: #bdd0c8;
+      --muted: #62716d;
+      --white: #ffffff;
+    }
+
+    * { box-sizing: border-box; }
+
+    html,
+    body {
+      margin: 0;
+      width: 100%;
+      min-height: 100%;
+      background: #d9d4ca;
+      color: var(--ink);
+      font-family: Pretendard, "Apple SD Gothic Neo", "Noto Sans KR", "Malgun Gothic", sans-serif;
+      -webkit-font-smoothing: antialiased;
+      word-break: keep-all;
+    }
+
+    body {
+      display: flex;
+      justify-content: center;
+      align-items: flex-start;
+    }
+
+    .canvas {
+      position: relative;
+      flex: 0 0 1600px;
+      width: 1600px;
+      height: 900px;
+      overflow: hidden;
+      padding: 40px 48px 32px;
+      background:
+        linear-gradient(90deg, rgba(13, 98, 95, 0.035) 1px, transparent 1px) 0 0 / 80px 80px,
+        var(--cream);
+      isolation: isolate;
+    }
+
+    .canvas::before {
+      content: "";
+      position: absolute;
+      top: 0;
+      left: 0;
+      width: 15px;
+      height: 100%;
+      background: var(--coral);
+    }
+
+    .canvas::after {
+      content: "RTSS LITE  /  PHYSICAL THERAPY DOCUMENTATION";
+      position: absolute;
+      right: -1px;
+      bottom: 12px;
+      z-index: -1;
+      color: rgba(13, 98, 95, 0.075);
+      font-size: 20px;
+      font-weight: 800;
+      letter-spacing: .16em;
+    }
+
+    header {
+      height: 112px;
+      display: grid;
+      grid-template-columns: 1fr 420px;
+      gap: 36px;
+      align-items: start;
+      border-bottom: 2px solid var(--ink);
+    }
+
+    .kicker {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      margin-bottom: 8px;
+      color: var(--teal);
+      font-size: 13px;
+      font-weight: 900;
+      letter-spacing: .15em;
+    }
+
+    .kicker::before {
+      content: "";
+      width: 30px;
+      height: 5px;
+      background: var(--coral);
+    }
+
+    h1 {
+      margin: 0;
+      color: var(--ink);
+      font-size: 42px;
+      line-height: 1.12;
+      font-weight: 900;
+      letter-spacing: -.035em;
+    }
+
+    h1 em {
+      color: var(--coral);
+      font-style: normal;
+    }
+
+    .purpose {
+      align-self: start;
+      min-height: 76px;
+      padding: 14px 18px 13px;
+      border-left: 5px solid var(--teal);
+      background: var(--paper);
+    }
+
+    .purpose-label {
+      display: block;
+      margin-bottom: 5px;
+      color: var(--coral);
+      font-size: 11px;
+      font-weight: 900;
+      letter-spacing: .12em;
+    }
+
+    .purpose strong {
+      display: block;
+      font-size: 18px;
+      line-height: 1.35;
+      letter-spacing: -.02em;
+    }
+
+    .purpose p {
+      margin: 4px 0 0;
+      color: var(--muted);
+      font-size: 12px;
+      line-height: 1.4;
+    }
+
+    main {
+      display: grid;
+      grid-template-rows: 320px 260px;
+      row-gap: 22px;
+      padding-top: 20px;
+    }
+
+    .section-heading {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      margin-bottom: 10px;
+      color: var(--teal);
+      font-size: 12px;
+      font-weight: 900;
+      letter-spacing: .14em;
+    }
+
+    .section-heading span {
+      color: var(--muted);
+      font-weight: 700;
+      letter-spacing: -.01em;
+    }
+
+    .flow-grid {
+      position: relative;
+      display: grid;
+      grid-template-columns: .88fr 1.28fr .98fr;
+      gap: 18px;
+      height: 282px;
+    }
+
+    .step {
+      position: relative;
+      display: flex;
+      flex-direction: column;
+      min-width: 0;
+      padding: 20px 22px 18px;
+      border: 2px solid var(--teal);
+      background: rgba(255, 253, 248, .92);
+    }
+
+    .step:not(:last-child)::after {
+      content: "";
+      position: absolute;
+      top: 50%;
+      right: -20px;
+      width: 20px;
+      height: 2px;
+      background: var(--teal);
+      transform: translateY(-50%);
+    }
+
+    .step-number {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      margin-bottom: 12px;
+      color: var(--coral);
+      font-size: 12px;
+      font-weight: 900;
+      letter-spacing: .12em;
+    }
+
+    .step-number b {
+      display: grid;
+      place-items: center;
+      width: 35px;
+      height: 35px;
+      border-radius: 50%;
+      background: var(--coral);
+      color: var(--white);
+      font-size: 15px;
+      letter-spacing: 0;
+    }
+
+    .step h2 {
+      margin: 0 0 8px;
+      font-size: 25px;
+      line-height: 1.22;
+      font-weight: 900;
+      letter-spacing: -.035em;
+    }
+
+    .step-lead {
+      margin: 0;
+      color: var(--muted);
+      font-size: 14px;
+      line-height: 1.5;
+    }
+
+    .quote {
+      margin-top: auto;
+      padding: 13px 14px;
+      border-left: 4px solid var(--coral);
+      background: var(--coral-soft);
+      color: var(--ink);
+      font-size: 15px;
+      line-height: 1.45;
+      font-weight: 800;
+    }
+
+    .spec-list {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 8px;
+      margin-top: 6px;
+    }
+
+    .spec-item {
+      min-height: 72px;
+      padding: 10px 11px 9px;
+      background: var(--mint-2);
+      border-top: 3px solid var(--teal-2);
+    }
+
+    .spec-item strong {
+      display: block;
+      margin-bottom: 3px;
+      color: var(--ink);
+      font-size: 14px;
+      font-weight: 900;
+    }
+
+    .spec-item span {
+      display: block;
+      color: var(--muted);
+      font-size: 11px;
+      line-height: 1.35;
+    }
+
+    .decision-list {
+      display: grid;
+      gap: 8px;
+      margin-top: 6px;
+    }
+
+    .decision-item {
+      display: grid;
+      grid-template-columns: 88px 1fr;
+      align-items: center;
+      min-height: 42px;
+      background: var(--mint-2);
+    }
+
+    .decision-item strong {
+      align-self: stretch;
+      display: grid;
+      place-items: center;
+      padding: 5px 8px;
+      background: var(--teal);
+      color: var(--white);
+      font-size: 12px;
+    }
+
+    .decision-item span {
+      padding: 7px 10px;
+      color: var(--ink);
+      font-size: 12px;
+      line-height: 1.35;
+      font-weight: 700;
+    }
+
+    .lower-grid {
+      display: grid;
+      grid-template-columns: .94fr 1.18fr 1.03fr;
+      gap: 18px;
+      height: 260px;
+    }
+
+    .panel {
+      position: relative;
+      overflow: hidden;
+      padding: 16px 18px;
+      border-top: 6px solid var(--teal);
+      background: var(--paper);
+    }
+
+    .panel.coral-top { border-top-color: var(--coral); }
+    .panel.gold-top { border-top-color: var(--gold); }
+
+    .panel-title {
+      display: flex;
+      align-items: baseline;
+      justify-content: space-between;
+      gap: 12px;
+      margin-bottom: 12px;
+    }
+
+    .panel h3 {
+      margin: 0;
+      font-size: 18px;
+      line-height: 1.2;
+      font-weight: 900;
+      letter-spacing: -.025em;
+    }
+
+    .panel-note {
+      color: var(--muted);
+      font-size: 10px;
+      font-weight: 700;
+      white-space: nowrap;
+    }
+
+    .core-grid {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 8px;
+    }
+
+    .core-item {
+      display: grid;
+      grid-template-columns: 78px 1fr;
+      min-height: 52px;
+      border: 1px solid var(--line);
+    }
+
+    .core-item b {
+      display: grid;
+      place-items: center;
+      padding: 6px;
+      background: var(--ink);
+      color: var(--white);
+      font-size: 11px;
+      letter-spacing: .025em;
+    }
+
+    .core-item span {
+      display: flex;
+      align-items: center;
+      padding: 7px 9px;
+      color: var(--ink);
+      font-size: 11px;
+      line-height: 1.3;
+      font-weight: 800;
+    }
+
+    .core-item.optional b { background: var(--coral); }
+
+    .comparison {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 10px;
+    }
+
+    .version {
+      min-height: 178px;
+      padding: 12px 13px 10px;
+      border: 1px solid var(--line);
+      background: var(--mint-2);
+    }
+
+    .version.lite {
+      border: 2px solid var(--coral);
+      background: var(--coral-soft);
+    }
+
+    .version-label {
+      display: inline-block;
+      margin-bottom: 8px;
+      padding: 4px 7px;
+      background: var(--ink);
+      color: var(--white);
+      font-size: 10px;
+      font-weight: 900;
+      letter-spacing: .06em;
+    }
+
+    .lite .version-label { background: var(--coral); }
+
+    .version h4 {
+      margin: 0 0 7px;
+      font-size: 15px;
+      font-weight: 900;
+    }
+
+    .version ul {
+      margin: 0;
+      padding: 0;
+      list-style: none;
+    }
+
+    .version li {
+      position: relative;
+      margin: 0 0 5px;
+      padding-left: 11px;
+      color: var(--muted);
+      font-size: 11px;
+      line-height: 1.36;
+      font-weight: 700;
+    }
+
+    .version li::before {
+      content: "";
+      position: absolute;
+      top: .55em;
+      left: 0;
+      width: 5px;
+      height: 5px;
+      background: var(--teal);
+    }
+
+    .lite li::before { background: var(--coral); }
+
+    .fit {
+      margin-top: 8px;
+      padding-top: 7px;
+      border-top: 1px solid rgba(24, 58, 57, .22);
+      color: var(--ink);
+      font-size: 10px;
+      line-height: 1.35;
+      font-weight: 900;
+    }
+
+    .roadmap {
+      position: relative;
+      display: grid;
+      grid-template-columns: 1fr 1fr 1fr;
+      gap: 8px;
+      padding-top: 8px;
+    }
+
+    .roadmap::before {
+      content: "";
+      position: absolute;
+      top: 29px;
+      left: 30px;
+      right: 30px;
+      height: 3px;
+      background: var(--line);
+    }
+
+    .road-step {
+      position: relative;
+      z-index: 1;
+      text-align: center;
+    }
+
+    .road-dot {
+      display: grid;
+      place-items: center;
+      width: 44px;
+      height: 44px;
+      margin: 0 auto 10px;
+      border: 4px solid var(--paper);
+      border-radius: 50%;
+      background: var(--teal);
+      color: var(--white);
+      font-size: 13px;
+      font-weight: 900;
+      box-shadow: 0 0 0 2px var(--teal);
+    }
+
+    .road-step:nth-child(2) .road-dot { background: var(--gold); box-shadow: 0 0 0 2px var(--gold); }
+    .road-step:nth-child(3) .road-dot { background: var(--coral); box-shadow: 0 0 0 2px var(--coral); }
+
+    .road-step h4 {
+      margin: 0 0 5px;
+      font-size: 13px;
+      font-weight: 900;
+    }
+
+    .road-step p {
+      margin: 0;
+      color: var(--muted);
+      font-size: 10px;
+      line-height: 1.35;
+      font-weight: 700;
+    }
+
+    .road-output {
+      margin-top: 13px;
+      padding: 8px 10px;
+      background: var(--ink);
+      color: var(--white);
+      font-size: 11px;
+      line-height: 1.35;
+      font-weight: 800;
+      text-align: center;
+    }
+
+    footer {
+      height: 74px;
+      margin-top: 22px;
+      display: grid;
+      grid-template-columns: 170px 1fr;
+      align-items: stretch;
+      background: var(--ink);
+      color: var(--white);
+    }
+
+    .safety-title {
+      display: flex;
+      flex-direction: column;
+      justify-content: center;
+      padding: 0 18px;
+      background: var(--coral);
+    }
+
+    .safety-title span {
+      font-size: 10px;
+      font-weight: 900;
+      letter-spacing: .12em;
+      opacity: .8;
+    }
+
+    .safety-title strong {
+      margin-top: 3px;
+      font-size: 20px;
+      font-weight: 900;
+    }
+
+    .safety-list {
+      display: grid;
+      grid-template-columns: .8fr .9fr 1.35fr 1.35fr;
+      align-items: center;
+      gap: 0;
+      padding: 0 16px;
+    }
+
+    .safety-item {
+      min-height: 36px;
+      display: flex;
+      align-items: center;
+      padding: 0 14px;
+      border-right: 1px solid rgba(255,255,255,.22);
+      font-size: 12px;
+      line-height: 1.35;
+      font-weight: 800;
+    }
+
+    .safety-item:last-child { border-right: 0; }
+
+    .safety-item::before {
+      content: "";
+      flex: 0 0 8px;
+      width: 8px;
+      height: 8px;
+      margin-right: 9px;
+      border-radius: 50%;
+      background: var(--gold);
+    }
+
+    @media print {
+      @page { size: 16in 9in; margin: 0; }
+      html, body { width: 1600px; height: 900px; background: transparent; }
+      body { display: block; }
+      .canvas { print-color-adjust: exact; -webkit-print-color-adjust: exact; }
+    }
+
+    @media (prefers-reduced-motion: reduce) {
+      *, *::before, *::after { scroll-behavior: auto !important; }
+    }
+  </style>
+</head>
+<body>
+  <article class="canvas" aria-labelledby="title">
+    <header>
+      <div>
+        <div class="kicker">재활치료 명세체계(Rehabilitation Treatment Specification System, RTSS) · 현장형</div>
+        <h1 id="title">RTSS Lite <em>|</em> 복잡한 기록을 <em>3단계 임상 흐름</em>으로</h1>
+      </div>
+      <aside class="purpose" aria-label="사업 목적">
+        <span class="purpose-label">PROJECT PURPOSE</span>
+        <strong>초보 물리치료사의 인지부담 감소와 기록 표준화</strong>
+        <p>핵심은 남기고, 현장에서 바로 기록할 수 있게 입력 흐름을 줄였습니다.</p>
+      </aside>
+    </header>
+
+    <main>
+      <section aria-labelledby="flow-title">
+        <div class="section-heading" id="flow-title">THE 3-STEP CLINICAL FLOW <span>환자의 삶 → 실제 치료 → 변화에 따른 다음 결정</span></div>
+        <div class="flow-grid">
+          <article class="step">
+            <div class="step-number"><b>1</b> 생활을 먼저 묻기</div>
+            <h2>환자 생활목표</h2>
+            <p class="step-lead">진단명보다 먼저, 환자가 일상에서 다시 하고 싶은 활동을 한 문장으로 정합니다.</p>
+            <div class="quote">“무엇을 다시 하고 싶으세요?”<br>
+              <span>예: 다른 사람의 도움 없이 화장실 다녀오기</span>
+            </div>
+          </article>
+
+          <article class="step">
+            <div class="step-number"><b>2</b> 치료를 명확히 쓰기</div>
+            <h2>직접 치료표적과 실제 제공내용</h2>
+            <div class="spec-list" aria-label="치료 명세 핵심 항목">
+              <div class="spec-item"><strong>직접 치료표적</strong><span>이번 회기에서 바꾸려는 구체적 기능</span></div>
+              <div class="spec-item"><strong>실제 치료방법</strong><span>치료사가 실제로 제공한 활동과 도움</span></div>
+              <div class="spec-item"><strong>작용기전 가설</strong><span>이 치료가 왜 변화를 만들 것으로 보았는지</span></div>
+              <div class="spec-item"><strong>실제 제공량</strong><span>시간·횟수·강도·도움 수준을 구체적으로</span></div>
+            </div>
+          </article>
+
+          <article class="step">
+            <div class="step-number"><b>3</b> 변화를 보고 결정하기</div>
+            <h2>결과측정 · 안전 · 다음 결정</h2>
+            <div class="decision-list">
+              <div class="decision-item"><strong>결과측정</strong><span>점수만이 아닌 측정 조건과 환자 반응까지</span></div>
+              <div class="decision-item"><strong>안전</strong><span>중단 기준, 이상 반응, 낙상 등 위험요소 확인</span></div>
+              <div class="decision-item"><strong>다음 결정</strong><span>유지·증량·수정·중단 중 하나를 명확히</span></div>
+            </div>
+          </article>
+        </div>
+      </section>
+
+      <section class="lower-grid" aria-label="핵심 유지 요소와 확장 로드맵">
+        <article class="panel">
+          <div class="panel-title">
+            <h3>간단해져도 핵심은 유지</h3>
+            <span class="panel-note">RTSS CORE</span>
+          </div>
+          <div class="core-grid">
+            <div class="core-item"><b>표적</b><span>Target · 직접 치료표적</span></div>
+            <div class="core-item"><b>치료방법</b><span>Ingredient · 실제 치료방법</span></div>
+            <div class="core-item"><b>기전</b><span>Mechanism · 작용기전 가설</span></div>
+            <div class="core-item"><b>용량</b><span>Dose · 실제 제공량</span></div>
+            <div class="core-item"><b>결과</b><span>Outcome · 결과측정과 판단</span></div>
+            <div class="core-item optional"><b>ICF 선택</b><span>국제 기능·장애·건강 분류 (ICF)</span></div>
+          </div>
+        </article>
+
+        <article class="panel coral-top">
+          <div class="panel-title">
+            <h3>두 버전은 경쟁이 아닌 역할 분담</h3>
+            <span class="panel-note">FULL + LITE</span>
+          </div>
+          <div class="comparison">
+            <section class="version">
+              <span class="version-label">FULL VERSION</span>
+              <h4>정밀 관리용 기존 버전</h4>
+              <ul>
+                <li>다중 사례·용어·근거 상세 관리</li>
+                <li>교육 운영과 품질 감사에 적합</li>
+              </ul>
+              <div class="fit">추천: 관리자 검토 · 체계적 교육 · 데이터 관리</div>
+            </section>
+            <section class="version lite">
+              <span class="version-label">LITE VERSION</span>
+              <h4>현장 빠른기록용 Lite</h4>
+              <ul>
+                <li>한 화면·3단계·즉시 차트 문장 미리보기</li>
+                <li>초보 치료사의 회기 직후 기록에 적합</li>
+              </ul>
+              <div class="fit">추천: 임상 파일럿 · 일상 기록 · 내용 초안 작성</div>
+            </section>
+          </div>
+        </article>
+
+        <article class="panel gold-top">
+          <div class="panel-title">
+            <h3>작게 시작하고, 검증 후 확장</h3>
+            <span class="panel-note">ROADMAP</span>
+          </div>
+          <div class="roadmap" aria-label="확장 로드맵">
+            <div class="road-step">
+              <div class="road-dot">01</div>
+              <h4>파일럿</h4>
+              <p>소규모 사례 기록과<br>Case Study로 우선 적용</p>
+            </div>
+            <div class="road-step">
+              <div class="road-dot">02</div>
+              <h4>피드백</h4>
+              <p>초보 사용자의<br>용어·흐름·부담 개선</p>
+            </div>
+            <div class="road-step">
+              <div class="road-dot">03</div>
+              <h4>병원 확장</h4>
+              <p>평가·프로그레스<br>의무기록까지 프레임 확장</p>
+            </div>
+          </div>
+          <div class="road-output">단계별 산출물: 사용성 의견 → 용어 표준안 → 기관 운영 가이드</div>
+        </article>
+      </section>
+    </main>
+
+    <footer aria-label="안전한 운영 원칙">
+      <div class="safety-title"><span>SAFETY FIRST</span><strong>안전 원칙</strong></div>
+      <div class="safety-list">
+        <div class="safety-item">비식별 사례만 입력</div>
+        <div class="safety-item">교육·파일럿 목적</div>
+        <div class="safety-item">전자 의무기록 시스템(EMR) 대체 아님</div>
+        <div class="safety-item">기관 승인·개인정보보호 절차를 먼저 준수</div>
+      </div>
+    </footer>
+  </article>
+</body>
+</html>
