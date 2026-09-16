@@ -15,6 +15,7 @@ import {
 import type { CustomCatalog, LiteIngredient, LiteRecord, LiteStore } from '@/app/lib/lite-types';
 import { baselineGuides, getGuideEvidenceLabel } from '@/app/lib/baseline-guides';
 import { rtss } from '@/app/lib/rtss';
+import { domainTargetResetPatch, filterTargetsByKeywords, repairStoredTargetSelection } from '@/app/lib/target-picker';
 
 const today = () => {
   const now = new Date();
@@ -41,14 +42,21 @@ const safetyOptions = [
   { value: 'not_delivered', label: '치료 미실시·중단' },
 ] as const;
 
-const targetByLabel = new Map(rtss.targets.map((target) => [target.what_kr, target]));
 const ingredientByLabel = new Map(rtss.ingredients.map((ingredient) => [ingredient.name_kr, ingredient]));
 const mechanismByLabel = new Map(rtss.mechanisms.map((mechanism) => [mechanism.name_kr, mechanism]));
+const CUSTOM_TARGET_VALUE = '__custom_target__';
+const CUSTOM_TARGET_PREFIX = 'custom:';
 
 const outcomeLabel = (id: string) => {
   const outcome = rtss.outcomes.find((item) => item.id === id);
   const guide = baselineGuides[id];
   return guide?.plainName ?? outcome?.name_kr ?? '';
+};
+
+const outcomeSearchText = (id: string) => {
+  const outcome = rtss.outcomes.find((item) => item.id === id);
+  const guide = baselineGuides[id];
+  return [guide?.plainName, guide?.fullName, outcome?.name_kr, outcome?.name_en].filter(Boolean).join(' ');
 };
 
 const outcomeByLabel = new Map(
@@ -73,6 +81,20 @@ function mergeCustomCatalog(catalog: CustomCatalog, record: LiteRecord): CustomC
   if ((record.measurementStatus === 'completed' || record.measurementStatus === 'stopped') && !record.outcomeId) outcomes = appendUnique(outcomes, record.outcomeLabel);
 
   return { targets, ingredients, mechanisms, outcomes };
+}
+
+function repairStoredTargetDomain(store: LiteStore): LiteStore {
+  const repairedDraft = repairStoredTargetSelection(
+    store.draft,
+    rtss.targets,
+    rtss.domains.map((domain) => domain.id),
+  );
+  if (repairedDraft === store.draft) return store;
+
+  return {
+    ...store,
+    draft: repairedDraft,
+  };
 }
 
 async function copyText(text: string) {
@@ -113,6 +135,8 @@ export default function Home() {
   const [attemptedCopy, setAttemptedCopy] = useState(false);
   const [copying, setCopying] = useState(false);
   const [ingredientInput, setIngredientInput] = useState('');
+  const [targetSearch, setTargetSearch] = useState('');
+  const [customTargetMode, setCustomTargetMode] = useState(false);
   const [toast, setToast] = useState('');
   const latestSerialized = useRef('');
   const saveStatusRef = useRef(saveStatus);
@@ -135,6 +159,33 @@ export default function Home() {
     () => rtss.targets.find((target) => target.id === record.targetId),
     [record.targetId],
   );
+  const filteredTargets = useMemo(
+    () => filterTargetsByKeywords(targets, targetSearch, outcomeSearchText),
+    [targets, targetSearch],
+  );
+  const filteredCustomTargets = useMemo(() => {
+    const terms = targetSearch.normalize('NFKC').toLocaleLowerCase('ko-KR').split(/\s+/).filter(Boolean);
+    return store.customCatalog.targets.filter((label) => {
+      const normalized = label.normalize('NFKC').toLocaleLowerCase('ko-KR');
+      return terms.every((term) => normalized.includes(term));
+    });
+  }, [store.customCatalog.targets, targetSearch]);
+  const selectedTargetOutsideResults = Boolean(
+    selectedTarget
+    && selectedTarget.domain === record.domainId
+    && !filteredTargets.some((target) => target.id === selectedTarget.id),
+  );
+  const selectedCustomOutsideResults = Boolean(
+    record.targetLabel
+    && !record.targetId
+    && !filteredCustomTargets.includes(record.targetLabel),
+  );
+  const totalTargetOptionCount = targets.length + store.customCatalog.targets.length;
+  const filteredTargetOptionCount = filteredTargets.length + filteredCustomTargets.length;
+  const showCustomTargetInput = customTargetMode || Boolean(record.targetLabel && !record.targetId);
+  const targetSelectionValue = record.targetId
+    || (record.targetLabel && !record.targetId ? `${CUSTOM_TARGET_PREFIX}${record.targetLabel}` : '')
+    || (customTargetMode ? CUSTOM_TARGET_VALUE : '');
   const selectedLink = useMemo(
     () => rtss.links.find((link) => link.target === record.targetId),
     [record.targetId],
@@ -173,8 +224,9 @@ export default function Home() {
         try {
           const parsed: unknown = JSON.parse(raw);
           if (isLiteStore(parsed)) {
-            setStore(parsed);
-            latestSerialized.current = raw;
+            const repaired = repairStoredTargetDomain(parsed);
+            setStore(repaired);
+            latestSerialized.current = JSON.stringify(repaired);
             setSaveStatus('saved');
           } else {
             setInvalidStoredRaw(raw);
@@ -241,25 +293,56 @@ export default function Home() {
 
   const invalid = (key: string) => attemptedCopy && missing.some((item) => item.key === key);
 
-  const handleTargetChange = (value: string) => {
-    const exact = targetByLabel.get(value);
+  const selectBuiltInTarget = (targetId: string) => {
+    const exact = rtss.targets.find((target) => target.id === targetId && target.domain === record.domainId);
+    if (!exact) return;
     const currentIcfWasAutoFilled = Boolean(selectedTarget?.icf && record.icfCodes.trim() === selectedTarget.icf.trim());
-    if (exact) {
-      updateDraft({
-        targetId: exact.id,
-        targetLabel: exact.what_kr,
-        targetDirection: exact.direction,
-        domainId: exact.domain,
-        icfCodes: !record.icfCodes.trim() || currentIcfWasAutoFilled ? exact.icf : record.icfCodes,
-      });
-      return;
-    }
+    updateDraft({
+      targetId: exact.id,
+      targetLabel: exact.what_kr,
+      targetDirection: exact.direction,
+      domainId: exact.domain,
+      icfCodes: !record.icfCodes.trim() || currentIcfWasAutoFilled ? exact.icf : record.icfCodes,
+    });
+    setCustomTargetMode(false);
+  };
+
+  const startCustomTarget = (value = '') => {
+    const currentIcfWasAutoFilled = Boolean(selectedTarget?.icf && record.icfCodes.trim() === selectedTarget.icf.trim());
     updateDraft({
       targetId: '',
       targetLabel: value,
       targetDirection: '',
       icfCodes: currentIcfWasAutoFilled ? '' : record.icfCodes,
     });
+    setCustomTargetMode(true);
+  };
+
+  const clearTargetSelection = () => {
+    updateDraft(domainTargetResetPatch(record.domainId, record.icfCodes, selectedTarget?.icf));
+    setCustomTargetMode(false);
+  };
+
+  const handleDomainChange = (nextDomainId: string) => {
+    updateDraft(domainTargetResetPatch(nextDomainId, record.icfCodes, selectedTarget?.icf));
+    setTargetSearch('');
+    setCustomTargetMode(false);
+  };
+
+  const handleTargetSelection = (value: string) => {
+    if (!value) {
+      clearTargetSelection();
+      return;
+    }
+    if (value === CUSTOM_TARGET_VALUE) {
+      startCustomTarget();
+      return;
+    }
+    if (value.startsWith(CUSTOM_TARGET_PREFIX)) {
+      startCustomTarget(value.slice(CUSTOM_TARGET_PREFIX.length));
+      return;
+    }
+    selectBuiltInTarget(value);
   };
 
   const handleMechanismChange = (value: string) => {
@@ -354,7 +437,10 @@ export default function Home() {
     }
     const currentMissing = missingFields(record);
     if (currentMissing.length) {
-      const first = document.getElementById(currentMissing[0].elementId);
+      const firstMissingId = currentMissing[0].key === 'targetLabel' && showCustomTargetInput
+        ? 'target-custom'
+        : currentMissing[0].elementId;
+      const first = document.getElementById(firstMissingId);
       first?.scrollIntoView({ behavior: 'smooth', block: 'center' });
       window.setTimeout(() => first?.focus(), 350);
       announce(`복사 전 ${currentMissing[0].label}부터 확인해 주세요.`);
@@ -393,6 +479,8 @@ export default function Home() {
       updatedAt: new Date().toISOString(),
     }));
     setIngredientInput('');
+    setTargetSearch('');
+    setCustomTargetMode(false);
     setAttemptedCopy(false);
     announce('새 기록을 시작했습니다.');
     window.scrollTo({ top: 0, behavior: 'smooth' });
@@ -433,6 +521,8 @@ export default function Home() {
       nextPlan: '같은 좌석 높이에서 독립 수행 80%를 확인한 뒤 좌석을 3cm 낮춤',
       icfCodes: target.icf,
     });
+    setTargetSearch('');
+    setCustomTargetMode(false);
     setAttemptedCopy(false);
     announce('합성 예시를 불러왔습니다. 실제 개인정보를 입력하지 마세요.');
   };
@@ -571,17 +661,70 @@ export default function Home() {
               <div className="field-grid two-col domain-target">
                 <div className="field compact-field">
                   <FieldLabel title="임상영역" help="선택지를 먼저 좁힙니다" htmlFor="domain" />
-                  <select id="domain" value={record.domainId} onChange={(event) => updateDraft({ domainId: event.target.value })}>
+                  <select id="domain" value={record.domainId} onChange={(event) => handleDomainChange(event.target.value)}>
                     {rtss.domains.map((domain) => <option key={domain.id} value={domain.id}>{domain.kr}</option>)}
                   </select>
                 </div>
-                <div className={`field ${invalid('targetLabel') ? 'invalid' : ''}`}>
-                  <FieldLabel title="직접 치료표적" help="이 치료가 직접 바꾸려는 관찰 가능한 한 가지" htmlFor="target" />
-                  <input id="target" list="target-options" value={record.targetLabel} onChange={(event) => handleTargetChange(event.target.value)} maxLength={180} placeholder="검색하거나 직접 입력" />
-                  <datalist id="target-options">
-                    {targets.map((target) => <option key={target.id} value={target.what_kr}>{target.direction}</option>)}
-                    {store.customCatalog.targets.map((label) => <option key={`custom-${label}`} value={label}>기관 검토 전 사용자 항목</option>)}
-                  </datalist>
+                <div className={`field target-picker ${invalid('targetLabel') ? 'invalid' : ''}`}>
+                  <FieldLabel title="직접 치료표적" help="관련 키워드로 찾은 뒤 목록에서 선택합니다" htmlFor="target-search" />
+                  <div className="target-search-box">
+                    <input
+                      id="target-search"
+                      type="search"
+                      value={targetSearch}
+                      onChange={(event) => setTargetSearch(event.target.value)}
+                      maxLength={80}
+                      placeholder="검색: 보행, 균형, 속도, 평가도구, ICF 코드"
+                      autoComplete="off"
+                    />
+                    {targetSearch && <button type="button" onClick={() => setTargetSearch('')} aria-label="치료표적 검색어 지우기">지우기</button>}
+                  </div>
+                  <div className="target-result-meta" aria-live="polite">
+                    <span>{totalTargetOptionCount}개 중 {filteredTargetOptionCount}개 검색됨</span>
+                    <span>한글·영문·변화방향·평가도구·ICF 검색</span>
+                  </div>
+                  <select
+                    id="target"
+                    aria-label="직접 치료표적 선택 목록"
+                    value={targetSelectionValue}
+                    onChange={(event) => handleTargetSelection(event.target.value)}
+                  >
+                    <option value="">치료표적을 선택하세요</option>
+                    {selectedTargetOutsideResults && selectedTarget && (
+                      <optgroup label="현재 선택 · 검색 결과와 별도">
+                        <option value={selectedTarget.id}>{selectedTarget.what_kr} · {selectedTarget.direction}</option>
+                      </optgroup>
+                    )}
+                    {selectedCustomOutsideResults && (
+                      <optgroup label="현재 선택 · 기관 검토 전 사용자 항목">
+                        <option value={`${CUSTOM_TARGET_PREFIX}${record.targetLabel}`}>{record.targetLabel}</option>
+                      </optgroup>
+                    )}
+                    {filteredTargets.length > 0 && (
+                      <optgroup label={`기본 치료표적 · ${filteredTargets.length}개 검색됨`}>
+                        {filteredTargets.map((target) => (
+                          <option key={target.id} value={target.id}>{target.what_kr} · {target.direction}</option>
+                        ))}
+                      </optgroup>
+                    )}
+                    {filteredCustomTargets.length > 0 && (
+                      <optgroup label="기관 검토 전 사용자 항목">
+                        {filteredCustomTargets.map((label) => <option key={`custom-${label}`} value={`${CUSTOM_TARGET_PREFIX}${label}`}>{label}</option>)}
+                      </optgroup>
+                    )}
+                    {!filteredTargetOptionCount && targetSearch && <option value="__no_target_result__" disabled>검색 결과가 없습니다</option>}
+                    <option value={CUSTOM_TARGET_VALUE}>목록에 없음 · 직접 입력</option>
+                  </select>
+                  {showCustomTargetInput && (
+                    <input
+                      id="target-custom"
+                      value={record.targetLabel}
+                      onChange={(event) => startCustomTarget(event.target.value)}
+                      maxLength={180}
+                      placeholder="새 치료표적을 구체적으로 입력"
+                      aria-label="새 직접 치료표적 입력"
+                    />
+                  )}
                   <div className="field-meta"><CustomBadge show={Boolean(record.targetLabel && !record.targetId)} />{record.targetDirection && <span>변화방향 · {record.targetDirection}</span>}</div>
                   {invalid('targetLabel') && <em>직접 치료표적을 선택하거나 입력해 주세요.</em>}
                 </div>

@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict';
+import { readFileSync } from 'node:fs';
 import {
   appendUnique,
   completionPercent,
@@ -9,6 +10,9 @@ import {
   LITE_STORAGE_KEY,
   missingFields,
 } from '../app/lib/lite-core.ts';
+import { domainTargetResetPatch, filterTargetsByKeywords, repairStoredTargetSelection } from '../app/lib/target-picker.ts';
+
+const seed = JSON.parse(readFileSync(new URL('../app/data/rtss-seed.json', import.meta.url), 'utf8'));
 
 const completeRecord = {
   ...createEmptyRecord('2026-09-16'),
@@ -98,4 +102,59 @@ assert.equal(isLiteStore(initial), true, '정상 Lite 저장자료를 인식한�
 assert.equal(isLiteStore({ schemaVersion: 2 }), false, '알 수 없는 저장 형식을 거부한다');
 assert.equal(isLiteStore({ schemaVersion: 1, draft: { caseCode: '부분자료', recordDate: '2026-09-16', aim: '', ingredients: [], targetLabel: '', mechanismLabel: '' }, customCatalog: {}, snapshots: [], updatedAt: '' }), false, '불완전한 저장자료를 정상자료로 열지 않는다');
 
-console.log('RTSS Lite note tests passed: 21 checks');
+const expectedTargetCounts = [14, 6, 9, 8, 6, 12, 7, 1, 5, 2, 10, 5];
+assert.deepEqual(
+  seed.domains.map((domain) => seed.targets.filter((target) => target.domain === domain.id).length),
+  expectedTargetCounts,
+  '모든 임상영역에서 직접 치료표적 선택 목록을 제공한다',
+);
+
+const walkingTargets = seed.targets.filter((target) => target.domain === 'D01');
+const balanceTargets = seed.targets.filter((target) => target.domain === 'D02');
+const outcomeNames = new Map(seed.outcomes.map((outcome) => [outcome.id, `${outcome.name_kr} ${outcome.name_en}`]));
+const outcomeNameForId = (id) => outcomeNames.get(id) ?? '';
+assert.deepEqual(filterTargetsByKeywords(walkingTargets, '발끌림', outcomeNameForId).map((target) => target.id), ['T031'], '한글 관련어로 치료표적을 찾는다');
+assert.deepEqual(filterTargetsByKeywords(walkingTargets, 'dual', outcomeNameForId).map((target) => target.id), ['T036'], '영문 관련어로 치료표적을 찾는다');
+assert.ok(filterTargetsByKeywords(walkingTargets, '10m', outcomeNameForId).some((target) => target.id === 'T028'), '연결된 평가도구 이름으로 치료표적을 찾는다');
+assert.ok(filterTargetsByKeywords(walkingTargets, 'b770 속도', outcomeNameForId).some((target) => target.id === 'T028'), 'ICF 코드와 변화방향을 함께 검색한다');
+assert.ok(filterTargetsByKeywords(walkingTargets, 'FGA', outcomeNameForId).some((target) => target.id === 'T034'), 'FGA 평가도구 약어로 치료표적을 찾는다');
+assert.ok(filterTargetsByKeywords(walkingTargets, 'TUG', outcomeNameForId).some((target) => target.id === 'T038'), 'TUG 평가도구 약어로 치료표적을 찾는다');
+assert.ok(filterTargetsByKeywords(walkingTargets, 'FAC', outcomeNameForId).some((target) => target.id === 'T034'), 'FAC 평가도구 약어로 치료표적을 찾는다');
+assert.ok(filterTargetsByKeywords(balanceTargets, 'BBS', outcomeNameForId).some((target) => target.id === 'T022'), 'BBS 평가도구 약어로 치료표적을 찾는다');
+
+assert.deepEqual(
+  domainTargetResetPatch('D01', 'd4104', 'd4104'),
+  { domainId: 'D01', targetId: '', targetLabel: '', targetDirection: '', icfCodes: '' },
+  '임상영역 변경 시 이전 표적과 자동 입력 ICF를 초기화한다',
+);
+assert.equal(domainTargetResetPatch('D01', 'd999', 'd4104').icfCodes, 'd999', '치료사가 직접 입력한 ICF는 영역 변경 시 보존한다');
+
+const domainIds = seed.domains.map((domain) => domain.id);
+const canonicalTarget = seed.targets.find((target) => target.id === 'T040');
+const repairedLabels = repairStoredTargetSelection(
+  { domainId: canonicalTarget.domain, targetId: canonicalTarget.id, targetLabel: '이전 표적명', targetDirection: '이전 방향', icfCodes: canonicalTarget.icf },
+  seed.targets,
+  domainIds,
+);
+assert.deepEqual(
+  [repairedLabels.targetLabel, repairedLabels.targetDirection],
+  [canonicalTarget.what_kr, canonicalTarget.direction],
+  '저장된 표적 ID에 맞춰 표적명과 변화방향을 최신 자료로 정규화한다',
+);
+assert.equal(
+  repairStoredTargetSelection({ ...repairedLabels, domainId: 'D99' }, seed.targets, domainIds).domainId,
+  canonicalTarget.domain,
+  '유효하지 않은 임상영역은 유효한 표적의 영역으로 복구한다',
+);
+assert.equal(
+  repairStoredTargetSelection({ ...repairedLabels, targetId: 'T999', targetLabel: '손상값' }, seed.targets, domainIds).targetId,
+  '',
+  '존재하지 않는 표적 ID는 선택 상태에서 제거한다',
+);
+assert.equal(
+  repairStoredTargetSelection({ ...repairedLabels, domainId: 'D99', targetId: '', targetLabel: '' }, seed.targets, domainIds).domainId,
+  'D01',
+  '임상영역과 표적이 모두 유효하지 않으면 기본 영역으로 복구한다',
+);
+
+console.log('RTSS Lite note tests passed: 37 checks');
