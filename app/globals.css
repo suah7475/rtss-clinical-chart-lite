@@ -1,4 +1,13 @@
+@font-face {
+  font-family: "Pretendard Variable";
+  src: url("/fonts/PretendardVariable.woff2") format("woff2-variations");
+  font-weight: 45 920;
+  font-style: normal;
+  font-display: swap;
+}
+
 :root {
+  --font-sans: "Pretendard Variable", Pretendard, "Noto Sans KR", "Apple SD Gothic Neo", "Malgun Gothic", system-ui, sans-serif;
   --canvas: #f4f1e9;
   --paper: #fffdf8;
   --paper-strong: #ffffff;
@@ -37,7 +46,7 @@ body {
     linear-gradient(180deg, rgba(255, 255, 255, 0.62) 0, rgba(255, 255, 255, 0) 320px),
     var(--canvas);
   color: var(--ink);
-  font-family: Pretendard, "Noto Sans KR", "Apple SD Gothic Neo", "Malgun Gothic", system-ui, sans-serif;
+  font-family: var(--font-sans);
   font-size: 15px;
   line-height: 1.55;
   word-break: keep-all;
@@ -122,7 +131,7 @@ fieldset:focus-visible {
   border-radius: 10px 10px 10px 3px;
   background: var(--teal);
   color: white;
-  font-family: Georgia, "Times New Roman", serif;
+  font-family: var(--font-sans);
   font-size: 24px;
   font-weight: 700;
 }
@@ -133,7 +142,7 @@ fieldset:focus-visible {
 }
 
 .brand-block strong {
-  font-family: Georgia, "Times New Roman", serif;
+  font-family: var(--font-sans);
   font-size: 19px;
   letter-spacing: -0.02em;
 }
@@ -280,7 +289,7 @@ fieldset:focus-visible {
 
 .intro h1 {
   margin: 10px 0 0;
-  font-family: Georgia, "Noto Serif KR", "Times New Roman", serif;
+  font-family: var(--font-sans);
   font-size: clamp(36px, 4.2vw, 58px);
   font-weight: 650;
   line-height: 1.08;
@@ -328,7 +337,7 @@ fieldset:focus-visible {
   border-radius: 50%;
   background: var(--teal-soft);
   color: var(--teal-dark);
-  font-family: Georgia, serif;
+  font-family: var(--font-sans);
 }
 
 .step-nav a.active b {
@@ -386,7 +395,7 @@ fieldset:focus-visible {
 .step-number {
   padding-top: 2px;
   color: var(--coral);
-  font-family: Georgia, serif;
+  font-family: var(--font-sans);
   font-size: 16px;
   font-weight: 750;
   letter-spacing: 0.04em;
@@ -394,7 +403,7 @@ fieldset:focus-visible {
 
 .step-heading h2 {
   margin: 0;
-  font-family: Georgia, "Noto Serif KR", serif;
+  font-family: var(--font-sans);
   font-size: 27px;
   line-height: 1.2;
   letter-spacing: -0.025em;
@@ -934,7 +943,7 @@ fieldset:focus-visible {
 
 .preview-heading h2 {
   margin: 4px 0 0;
-  font-family: Georgia, "Noto Serif KR", serif;
+  font-family: var(--font-sans);
   font-size: 25px;
   line-height: 1.1;
 }
@@ -947,7 +956,7 @@ fieldset:focus-visible {
 
 .completion strong {
   color: var(--teal);
-  font-family: Georgia, serif;
+  font-family: var(--font-sans);
   font-size: 25px;
 }
 
@@ -1015,7 +1024,7 @@ fieldset:focus-visible {
   border-radius: 11px;
   background: #f8f8f4;
   color: #263c39;
-  font-family: "Noto Sans KR", "Apple SD Gothic Neo", sans-serif;
+  font-family: var(--font-sans);
   font-size: 12px;
   line-height: 1.75;
   white-space: pre-wrap;

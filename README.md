@@ -61,3 +61,7 @@ npm run build
 - PNG: `deliverables/RTSS_Lite_성과물_인포그래픽.png`
 
 인포그래픽은 1600×900 화면에 맞춰 제작되어 발표자료나 성과물 보고서에 바로 삽입할 수 있습니다.
+
+## 글꼴
+
+앱과 인포그래픽 전체에 Pretendard Variable 1.3.9를 자체 포함하여 적용했습니다. 글꼴 파일은 SIL Open Font License 1.1에 따라 배포되며, 라이선스 전문은 `public/fonts/Pretendard-LICENSE.txt`에서 확인할 수 있습니다.
