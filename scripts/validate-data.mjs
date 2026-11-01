@@ -24,11 +24,11 @@ const outcomeIds = idSet(data.outcomes, 'Outcome');
 
 const expectedCounts = {
   domains: 12,
-  targets: 85,
-  ingredients: 114,
-  mechanisms: 61,
-  outcomes: 37,
-  links: 97,
+  targets: 87,
+  ingredients: 123,
+  mechanisms: 71,
+  outcomes: 39,
+  links: 110,
 };
 Object.entries(expectedCounts).forEach(([collection, count]) => {
   assert(data[collection].length === count, `${collection}: ${count}개 확인`);
@@ -75,7 +75,7 @@ assert(data.domains.every((domain) => data.targets.some((target) => target.domai
 const targetLinkCounts = new Map();
 data.links.forEach((link) => targetLinkCounts.set(link.target, (targetLinkCounts.get(link.target) ?? 0) + 1));
 const extraLinkVariants = data.links.length - targetLinkCounts.size;
-assert(extraLinkVariants === 12, '다중 Link 치료 구성 변형 12개 확인');
+assert(extraLinkVariants === 23, '다중 Link 치료 구성 변형 23개 확인');
 assert([...targetLinkCounts.values()].some((count) => count > 1), '다중 Link Target을 개별 변형으로 유지');
 assert(
   [...targetLinkCounts.entries()].every(([targetId, count]) => data.links.filter((link) => link.target === targetId).length === count),
@@ -89,7 +89,7 @@ const guideObjectSource = guideSource.slice(guideObjectStart, guideObjectEnd);
 const guideIds = new Set([...guideObjectSource.matchAll(/^\s{2}(O\d{2}):\s*\{/gm)].map((match) => match[1]));
 assert(data.outcomes.every((outcome) => guideIds.has(outcome.id)), '모든 Outcome에 기준선 가이드 존재');
 assert([...guideIds].every((id) => outcomeIds.has(id)), '기준선 가이드에 고아 Outcome ID 없음');
-assert(guideIds.size === expectedCounts.outcomes, '기준선 가이드 37개 확인');
+assert(guideIds.size === expectedCounts.outcomes, `기준선 가이드 ${expectedCounts.outcomes}개 확인`);
 
 console.log(`RTSS seed validation passed: ${checks.length} checks`);
 console.log(`${data.domains.length} domains · ${data.targets.length} targets · ${data.ingredients.length} ingredients · ${data.mechanisms.length} MoA · ${data.links.length} links · ${data.outcomes.length} outcomes`);

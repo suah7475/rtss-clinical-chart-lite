@@ -172,8 +172,10 @@ export const outcomeDetailPrompts: Record<string, string> = {
   O33: '관찰 부위·쪽·과제',
   O34: '검사한 손과 결과항목(예: 오른손 · 총 수행시간)',
   O35: '기관 과제명과 결과변수',
-  O36: '영역·판(예: 이동영역 · 3.0판)',
-  O37: '결과항목(예: 전체 15개 항목 총점)',
+  O36: '프로그램·기록방법(예: 원격 상지 과제 앱 · 앱 기록)',
+  O37: '측정기기·목표대(예: 가슴 심박계 · 60–80% 여유심박)',
+  O38: '영역·판(예: 이동영역 · 3.0판)',
+  O39: '결과항목(예: 전체 15개 항목 총점)',
 };
 
 /** 한쪽 팔·손·다리 또는 한쪽 통증처럼 측정 쪽이 결과의 일부인 도구입니다. */
@@ -194,7 +196,7 @@ export const outcomeDetailOptions: Record<string, string[]> = {
   O24: ['수정 바델지수 Shah판 · 총점', '기능독립측정 · 총점', '기능독립측정 · 운동영역', '기능독립측정 · 인지영역'],
   O25: ['개별 목표 · 5단계 원등급', '여러 목표 합산 · T점수'],
   O28: ['13문항 원판 · 총점', '13문항 4점판 · 총점'],
-  O36: ['근력영역 · 3.0판', '손기능영역 · 3.0판', '일상생활영역 · 3.0판', '이동영역 · 3.0판', '의사소통영역 · 3.0판', '감정영역 · 3.0판', '기억·사고영역 · 3.0판', '사회참여영역 · 3.0판', '회복정도 문항 · 3.0판'],
+  O38: ['근력영역 · 3.0판', '손기능영역 · 3.0판', '일상생활영역 · 3.0판', '이동영역 · 3.0판', '의사소통영역 · 3.0판', '감정영역 · 3.0판', '기억·사고영역 · 3.0판', '사회참여영역 · 3.0판', '회복정도 문항 · 3.0판'],
 };
 
 export function getGuideEvidenceLabel(guide: BaselineGuide) {
@@ -799,7 +801,23 @@ export const baselineGuides: Record<string, BaselineGuide> = {
     referenceValues: [], changeValues: [], cautions: ['표준화된 평가도구가 아닌 기관 과제입니다. 이 사례 안에서 같은 조건의 반복측정에만 사용하고 검증된 도구를 함께 고려합니다.'], sources: [],
   },
   O36: {
-    id: 'O36',
+    id: 'O36', plainName: '원격·자기관리 프로그램 실천 기록', fullName: '원격·자기관리 프로그램 이행 기록(Tele/Self-managed Program Adherence Log)',
+    purpose: '원격재활이나 자기관리 프로그램을 처방한 용량대로 실제로 수행했는지 봅니다.',
+    scoreFormat: '기록기간 동안 완료한 회기·시간·반복 수를 계획한 값과 나란히 쓰고 비율을 계산합니다.', defaultUnit: '% 또는 완료/계획', direction: '비율이 높을수록 처방한 용량을 더 많이 수행했습니다.',
+    example: '지난 7일 5/6회(83%) · 회기당 평균 52분 · 반복 410회 · 앱 기록 · 1회 피로로 중단',
+    recording: ['프로그램·과제 이름, 기록기간, 계획한 빈도·시간·반복, 실제 수행값, 기록방법(앱·일지·보호자 보고)과 미실시 사유를 남깁니다.', ...commonRecording],
+    referenceValues: [], changeValues: [], cautions: ['앱 로그와 자가보고는 정확도가 다릅니다. 수행률만으로 동작의 질이나 안전을 판단하지 않고, 원격 수행 중 이상반응 확인 방법을 함께 기록합니다.'], sources: [],
+  },
+  O37: {
+    id: 'O37', plainName: '목표 심박대 유지 시간·걸음 수', fullName: '목표 심박대 체류 시간·보수(Time in Target Heart-rate Zone / Step Count by Activity Monitor)',
+    purpose: '고강도 보행훈련이나 유산소 운동에서 실제로 전달된 강도와 양을 확인합니다.',
+    scoreFormat: '목표 심박대에 머문 시간(분)과 회기 걸음 수를 각각 기록하고 목표대 기준을 함께 씁니다.', defaultUnit: '분, 걸음', direction: '같은 목표대 기준에서 체류 시간과 걸음 수가 많을수록 전달 용량이 큽니다.',
+    example: '목표대 60–80% 여유심박 28분 · 1,450보 · 가슴 심박계 · 지상·트레드밀 혼합',
+    recording: ['목표대 계산식(여유심박·최대심박·운동자각도), 측정기기와 착용 위치, 회기 전체 시간, 체류 시간, 걸음 수와 안전 중단 기준을 남깁니다.', ...commonRecording],
+    referenceValues: [], changeValues: [], cautions: ['베타차단제 복용 등으로 심박 반응이 둔하면 운동자각도를 함께 씁니다. 기기마다 걸음 수가 달라 같은 기기로만 비교합니다.'], sources: [],
+  },
+  O38: {
+    id: 'O38',
     plainName: '뇌졸중이 생활에 미친 영향 설문',
     fullName: '뇌졸중 영향 척도(Stroke Impact Scale, SIS)',
     purpose: '환자가 느끼는 힘, 손기능, 이동, 일상활동, 의사소통, 감정, 기억, 사회참여의 영향을 봅니다.',
@@ -821,8 +839,8 @@ export const baselineGuides: Record<string, BaselineGuide> = {
       { label: '뇌졸중 영향 척도 영역별 변화 연구', url: 'https://doi.org/10.1177/1545968309356295' },
     ],
   },
-  O37: {
-    id: 'O37',
+  O39: {
+    id: 'O39',
     plainName: '뇌졸중 신경학적 중증도 검사',
     fullName: '미국 국립보건원 뇌졸중 척도(National Institutes of Health Stroke Scale, NIHSS)',
     purpose: '의식, 눈운동, 시야, 운동, 감각, 언어 등 급성 신경학적 결손의 중증도를 봅니다.',
@@ -855,6 +873,8 @@ export const outcomeEasyNames: Record<string, string> = {
   O33: '어깨뼈 움직임 관찰',
   O34: '젭슨-테일러 손기능 검사',
   O35: '고리·원뿔 옮기기 시간',
+  O36: '원격·자기관리 프로그램 실천 기록',
+  O37: '목표 심박대 유지 시간·걸음 수',
 };
 
 export function getBaselineGuide(outcomeId: string): BaselineGuide | undefined {

@@ -55,6 +55,8 @@ export interface SavedSnapshot {
 
 export interface LiteStore {
   schemaVersion: 1;
+  /** 저장 당시 기준정보 DB 버전. 없으면 v3.2 이전 자료입니다. */
+  dataVersion?: string;
   draft: LiteRecord;
   customCatalog: CustomCatalog;
   snapshots: SavedSnapshot[];

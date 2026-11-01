@@ -10,6 +10,7 @@ import {
   generateLiteNote,
   hasMeaningfulDraft,
   isLiteStore,
+  migrateLegacyOutcomeIds,
   LITE_STORAGE_KEY,
   missingFields,
   repairLegacyCombinedSafetyStatus,
@@ -351,7 +352,7 @@ export default function Home() {
         try {
           const parsed: unknown = JSON.parse(raw);
           if (isLiteStore(parsed)) {
-            const repaired = repairStoredCatalogSelections(parsed);
+            const repaired = repairStoredCatalogSelections(migrateLegacyOutcomeIds(parsed));
             setStore(repaired);
             latestSerialized.current = JSON.stringify(repaired);
             setSaveStatus('saved');
@@ -1174,7 +1175,7 @@ export default function Home() {
                             .filter(Boolean)
                             .slice(0, 2)
                             .join(', ');
-                          return <option key={link.id} value={link.id}>{index + 1}. {primaryNames || link.id} · {link.strength || '참고안'}</option>;
+                          return <option key={link.id} value={link.id}>{index + 1}. {primaryNames || link.id} · {link.strength.split(' | ')[0] || '참고안'}</option>;
                         })}
                       </select>
                     </label>

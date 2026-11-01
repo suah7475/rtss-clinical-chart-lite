@@ -8,7 +8,9 @@ import {
   generateLiteNote,
   hasMeaningfulDraft,
   isLiteStore,
+  LITE_DATA_VERSION,
   LITE_STORAGE_KEY,
+  migrateLegacyOutcomeIds,
   missingFields,
   repairLegacyCombinedSafetyStatus,
 } from '../app/lib/lite-core.ts';
@@ -133,6 +135,17 @@ assert.deepEqual(appendUnique(['기존 항목'], '새 항목'), ['기존 항목'
 const initial = createInitialStore('2026-09-16');
 assert.equal(isLiteStore(initial), true, '정상 Lite 저장자료를 인식한다');
 assert.equal(isLiteStore({ schemaVersion: 2 }), false, '알 수 없는 저장 형식을 거부한다');
+
+const legacyStore = { ...createInitialStore('2026-09-16') };
+delete legacyStore.dataVersion;
+const legacySis = { ...legacyStore, draft: { ...legacyStore.draft, outcomeId: 'O36', outcomeLabel: '뇌졸중이 생활에 미친 영향 설문' } };
+assert.equal(isLiteStore(legacySis), true, 'DB 버전 표시가 없는 이전 저장자료도 인식한다');
+assert.equal(migrateLegacyOutcomeIds(legacySis).draft.outcomeId, 'O38', '이전 자료의 SIS(O36)를 v3.2 ID O38로 옮긴다');
+assert.equal(migrateLegacyOutcomeIds({ ...legacyStore, draft: { ...legacyStore.draft, outcomeId: 'O37' } }).draft.outcomeId, 'O39', '이전 자료의 NIHSS(O37)를 v3.2 ID O39로 옮긴다');
+assert.equal(migrateLegacyOutcomeIds(legacySis).dataVersion, LITE_DATA_VERSION, '이관한 자료에 DB 버전을 표시한다');
+const currentTele = { ...initial, draft: { ...initial.draft, outcomeId: 'O36' } };
+assert.equal(migrateLegacyOutcomeIds(currentTele).draft.outcomeId, 'O36', 'v3.2에서 저장한 O36(원격 프로그램 기록)은 바꾸지 않는다');
+assert.ok(seed.outcomes.every((outcome) => baselineGuides[outcome.id]), '모든 평가도구에 기준선 가이드가 있다');
 assert.equal(isLiteStore({ schemaVersion: 1, draft: { caseCode: '부분자료', recordDate: '2026-09-16', aim: '', ingredients: [], targetLabel: '', mechanismLabel: '' }, customCatalog: {}, snapshots: [], updatedAt: '' }), false, '불완전한 저장자료를 정상자료로 열지 않는다');
 
 assert.equal(hasMeaningfulDraft(createEmptyRecord('2026-09-16')), false, '기본 날짜와 임상영역만 있는 기록은 작업 중 자료로 보지 않는다');
@@ -146,13 +159,13 @@ assert.equal(
 
 assert.deepEqual(
   [seed.domains.length, seed.targets.length, seed.ingredients.length, seed.mechanisms.length, seed.outcomes.length, seed.links.length],
-  [12, 85, 114, 61, 37, 97],
+  [12, 87, 123, 71, 39, 110],
   '임상 DB의 모든 주요 자료 수를 유지한다',
 );
-assert.equal(Object.keys(baselineGuides).length, 37, '37개 결과측정 도구 모두 기준선 가이드를 제공한다');
+assert.equal(Object.keys(baselineGuides).length, 39, '39개 결과측정 도구 모두 기준선 가이드를 제공한다');
 assert.ok(seed.outcomes.every((outcome) => baselineGuides[outcome.id]), 'DB의 모든 결과측정 도구가 기준선 가이드와 연결된다');
 
-const expectedTargetCounts = [14, 6, 9, 8, 6, 12, 7, 1, 5, 2, 10, 5];
+const expectedTargetCounts = [15, 6, 9, 8, 6, 12, 7, 1, 5, 2, 11, 5];
 assert.deepEqual(
   seed.domains.map((domain) => seed.targets.filter((target) => target.domain === domain.id).length),
   expectedTargetCounts,
@@ -176,11 +189,11 @@ const guideSearchText = (outcomeId) => {
   const guide = baselineGuides[outcomeId];
   return guide ? [guide.plainName, guide.fullName, guide.purpose, guide.scoreFormat, guide.direction].join(' ') : '';
 };
-assert.equal(filterOutcomesByKeywords(seed.outcomes, '', guideSearchText).length, 37, '검색어가 없으면 결과측정 도구 37개를 모두 표시한다');
+assert.equal(filterOutcomesByKeywords(seed.outcomes, '', guideSearchText).length, 39, '검색어가 없으면 결과측정 도구 39개를 모두 표시한다');
 assert.deepEqual(filterOutcomesByKeywords(seed.outcomes, 'BBS', guideSearchText).map((outcome) => outcome.id), ['O03'], 'BBS 약어로 결과측정 도구를 찾는다');
-assert.ok(filterOutcomesByKeywords(seed.outcomes, 'SIS', guideSearchText).some((outcome) => outcome.id === 'O36'), 'SIS 약어로 추가된 결과측정 도구를 찾는다');
-assert.deepEqual(filterOutcomesByKeywords(seed.outcomes, 'NIHSS', guideSearchText).map((outcome) => outcome.id), ['O37'], 'NIHSS 약어로 추가된 결과측정 도구를 찾는다');
-assert.deepEqual(filterOutcomesByKeywords(seed.outcomes, '뇌졸중 영향', guideSearchText).map((outcome) => outcome.id), ['O36'], '여러 한글 키워드가 모두 맞는 결과측정 도구를 찾는다');
+assert.ok(filterOutcomesByKeywords(seed.outcomes, 'SIS', guideSearchText).some((outcome) => outcome.id === 'O38'), 'SIS 약어로 추가된 결과측정 도구를 찾는다');
+assert.deepEqual(filterOutcomesByKeywords(seed.outcomes, 'NIHSS', guideSearchText).map((outcome) => outcome.id), ['O39'], 'NIHSS 약어로 추가된 결과측정 도구를 찾는다');
+assert.deepEqual(filterOutcomesByKeywords(seed.outcomes, '뇌졸중 영향', guideSearchText).map((outcome) => outcome.id), ['O38'], '여러 한글 키워드가 모두 맞는 결과측정 도구를 찾는다');
 
 assert.deepEqual(
   outcomeSelectionPatch('O06', baselineGuides.O06.plainName, baselineGuides.O06.defaultUnit),
@@ -195,7 +208,7 @@ assert.deepEqual(
   '도구 선택 시 식별자·쉬운 이름·명확한 기본 단위를 반영한다',
 );
 assert.equal(suggestedOutcomeUnit(baselineGuides.O09.defaultUnit), '', '여러 단위가 섞인 결과측정 도구는 단위를 임의로 자동 선택하지 않는다');
-assert.equal(suggestedOutcomeUnit(baselineGuides.O36.defaultUnit), '', '영역별로 달라지는 단위는 임의로 자동 선택하지 않는다');
+assert.equal(suggestedOutcomeUnit(baselineGuides.O38.defaultUnit), '', '영역별로 달라지는 단위는 임의로 자동 선택하지 않는다');
 
 assert.deepEqual(
   measurementStatusTransitionPatch('completed'),
@@ -229,7 +242,7 @@ assert.deepEqual(
 
 const linksByTarget = new Map();
 seed.links.forEach((link) => linksByTarget.set(link.target, [...(linksByTarget.get(link.target) ?? []), link]));
-assert.equal(seed.links.length - linksByTarget.size, 12, '다중 치료 구성 Link 변형 12개를 보존한다');
+assert.equal(seed.links.length - linksByTarget.size, 23, '다중 치료 구성 Link 변형 23개를 보존한다');
 assert.deepEqual(
   [...linksByTarget.values()].flatMap((links) => links.map((link) => link.id)).sort(),
   seed.links.map((link) => link.id).sort(),

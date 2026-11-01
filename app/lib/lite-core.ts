@@ -8,6 +8,10 @@ import type {
 } from '@/app/lib/lite-types';
 
 export const LITE_STORAGE_KEY = 'rtss-clinical-chart-lite-v1';
+export const LITE_DATA_VERSION = '3.2';
+
+/** DB v3.2에서 ID가 바뀐 평가도구(v2.1 기준 SIS·NIHSS → v3.2 O38·O39). */
+export const LEGACY_OUTCOME_ID_MAP: Record<string, string> = { O36: 'O38', O37: 'O39' };
 
 export const emptyCustomCatalog = (): CustomCatalog => ({
   targets: [],
@@ -49,6 +53,7 @@ export function createEmptyRecord(recordDate: string): LiteRecord {
 export function createInitialStore(recordDate: string): LiteStore {
   return {
     schemaVersion: 1,
+    dataVersion: LITE_DATA_VERSION,
     draft: createEmptyRecord(recordDate),
     customCatalog: emptyCustomCatalog(),
     snapshots: [],
@@ -65,6 +70,16 @@ export function hasMeaningfulDraft(record: LiteRecord, defaultRecordDate = recor
     const value = record[key];
     return typeof value === 'string' && Boolean(value.trim());
   });
+}
+
+export function migrateLegacyOutcomeIds(store: LiteStore): LiteStore {
+  if (store.dataVersion === LITE_DATA_VERSION) return store;
+  const mappedOutcomeId = LEGACY_OUTCOME_ID_MAP[store.draft.outcomeId];
+  return {
+    ...store,
+    dataVersion: LITE_DATA_VERSION,
+    draft: mappedOutcomeId ? { ...store.draft, outcomeId: mappedOutcomeId } : store.draft,
+  };
 }
 
 export function repairLegacyCombinedSafetyStatus(record: LiteRecord): LiteRecord {
@@ -84,6 +99,7 @@ export function isLiteStore(value: unknown): value is LiteStore {
   if (!value || typeof value !== 'object') return false;
   const candidate = value as Partial<LiteStore>;
   if (candidate.schemaVersion !== 1 || !candidate.draft || !candidate.customCatalog || !Array.isArray(candidate.snapshots)) return false;
+  if (candidate.dataVersion !== undefined && !isString(candidate.dataVersion)) return false;
   const draft = candidate.draft as unknown as Record<string, unknown>;
   const stringFields: Array<keyof Omit<LiteRecord, 'ingredients'>> = [
     'caseCode', 'recordDate', 'aim', 'domainId', 'targetId', 'targetLabel', 'targetDirection',

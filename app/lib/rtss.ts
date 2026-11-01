@@ -81,28 +81,9 @@ interface RtssSeed {
   references: Array<{ id: string; citation: string; type: string; url: string; key_points: string }>;
 }
 
-const v21IcfCorrections: Record<string, string> = {
-  T004: 'b7300',
-  T018: 'b156',
-  T035: 'd465, e1201',
-  T039: 'd4107, d4100, d4103',
-  T053: 'd6601, e310, e340',
-  T054: 'pf',
-  T055: 'd5702',
-  T057: 'pf',
-  T060: 'pf, d5702, e1201',
-  T069: 'pf, e310, e340',
-};
-
 const seed = rawSeed as RtssSeed;
 
-export const rtss = {
-  ...seed,
-  targets: seed.targets.map((target) => ({
-    ...target,
-    icf: v21IcfCorrections[target.id] ?? target.icf,
-  })),
-};
+export const rtss = seed;
 
 export const groupLabel = (group: string) =>
   group === 'OF' ? '몸의 기능' : group === 'SH' ? '기술·습관' : '생각·지식·동기';
